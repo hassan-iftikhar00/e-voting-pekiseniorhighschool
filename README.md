@@ -41,54 +41,6 @@ The Peki Senior High School E-Voting System is a web-based application that auto
 - **Internet Connection**: Stable connection required for voting
 - **Devices**: Compatible with desktop computers, laptops, tablets, and smartphones
 
-## Installation & Setup
-
-### Prerequisites
-
-- Node.js (v14+)
-- MongoDB (v4+)
-- npm or yarn package manager
-
-### Installation Steps
-
-1. Clone the repository
-
-   ```
-   git clone https://github.com/peki-shs/e-voting-system.git
-   cd e-voting-system
-   ```
-
-2. Install dependencies
-
-   ```
-   npm install
-   # or
-   yarn install
-   ```
-
-3. Configure environment variables
-
-   - Create a `.env` file in the root directory
-   - Add the following variables:
-     ```
-     PORT=5000
-     MONGODB_URI=mongodb://localhost:27017/peki-voting
-     JWT_SECRET=your_jwt_secret_key
-     NODE_ENV=development
-     ```
-
-4. Start the development server
-
-   ```
-   npm run dev
-   # or
-   yarn dev
-   ```
-
-5. Access the application
-   - Frontend: http://localhost:3000
-   - Backend API: http://localhost:5000
-
 ## Usage Guide
 
 ### Admin Setup Process
@@ -127,13 +79,18 @@ The Peki Senior High School E-Voting System is a web-based application that auto
 - **Vote Integrity**: Measures to prevent duplicate voting
 - **Session Management**: Automatic timeout for inactive sessions
 
-## Support & Feedback
+## Licensing
 
-For technical support or to provide feedback, please contact:
+© 2025 Hassan Iftikhar. All rights reserved.
 
-- Email: support@pekishs-evoting.edu.gh
-- Phone: +233 XX XXX XXXX
+This software is proprietary and confidential. No part of this software may be reproduced, distributed, or transmitted in any form or by any means, including photocopying, recording, or other electronic or mechanical methods, without the prior written permission of the owner.
 
-## License
+**IMPORTANT**: This software has no open-source components and is not available for use, modification, or distribution under any circumstances without explicit written permission from the owner. All rights are exclusively reserved.
 
-© 2023 Peki Senior High School. All rights reserved.
+See the [LICENSE.md](./LICENSE.md) file for complete licensing details.
+
+## Contact
+
+For any inquiries or support, please contact:
+
+- Email: hassaniftikhardev@gmail.com
