@@ -10,6 +10,7 @@ import Candidates from "./components/Candidates";
 import ConfirmVote from "./components/ConfirmVote";
 import ThankYou from "./components/ThankYou";
 import ElectionManagerVoterPanel from "./components/ElectionManagerVoterPanel";
+import VoteSuccess from "./components/VoteSuccess";
 
 const App: React.FC = () => {
   return (
@@ -28,6 +29,7 @@ const App: React.FC = () => {
                   <Route path="/voting-auth" element={<VotingAuth />} />
                   <Route path="/candidates" element={<Candidates />} />
                   <Route path="/confirm-vote" element={<ConfirmVote />} />
+                  <Route path="/vote-success" element={<VoteSuccess />} />
                   <Route path="/thank-you" element={<ThankYou />} />
                   <Route
                     path="/election-manager/*"

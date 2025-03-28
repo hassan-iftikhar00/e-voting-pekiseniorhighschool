@@ -1,10 +1,17 @@
 import Log from "../models/Log.js";
 import Election from "../models/Election.js";
 
-// Get all activity logs
+// Get all activity logs with pagination
 export const getAllLogs = async (req, res) => {
   try {
-    const { user, action, startDate, endDate } = req.query;
+    const {
+      user,
+      action,
+      startDate,
+      endDate,
+      limit = 20,
+      skip = 0,
+    } = req.query;
 
     // Build filter object
     const filter = {};
@@ -32,7 +39,22 @@ export const getAllLogs = async (req, res) => {
       }
     }
 
-    const logs = await Log.find(filter).sort({ timestamp: -1 });
+    // Parse pagination parameters
+    const limitNum = parseInt(limit, 10);
+    const skipNum = parseInt(skip, 10);
+
+    // Get total count (optional - can be used for pagination info)
+    const totalCount = await Log.countDocuments(filter);
+
+    // Get logs with pagination
+    const logs = await Log.find(filter)
+      .sort({ timestamp: -1 })
+      .skip(skipNum)
+      .limit(limitNum);
+
+    // Include total count in response headers (optional)
+    res.set("X-Total-Count", totalCount.toString());
+
     res.status(200).json(logs);
   } catch (error) {
     console.error("Error fetching logs:", error);

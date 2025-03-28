@@ -18,6 +18,15 @@ import { useUser } from "../../context/UserContext";
 
 // Define interfaces for the data
 interface Permission {
+  view?: boolean;
+  add?: boolean;
+  edit?: boolean;
+  delete?: boolean;
+  [key: string]: boolean | undefined; // Allow any string keys for other permission types
+}
+
+// Interface for the array-based permission format used for new role creation
+interface PermissionItem {
   resource: string;
   actions: string[];
 }
@@ -26,7 +35,7 @@ interface Role {
   _id: string;
   name: string;
   description: string;
-  permissions: Permission[];
+  permissions: Map<string, Permission> | Record<string, Permission>; // Can be Map or plain object
   isDefault?: boolean;
   isSystem?: boolean;
   createdAt?: string;
@@ -103,7 +112,11 @@ const RolePermissionsManager: React.FC = () => {
   const [selectedRole, setSelectedRole] = useState<Role | null>(null);
   const [isCreatingRole, setIsCreatingRole] = useState(false);
   const [editingRole, setEditingRole] = useState<Role | null>(null);
-  const [newRole, setNewRole] = useState<Omit<Role, "_id">>({
+  const [newRole, setNewRole] = useState<{
+    name: string;
+    description: string;
+    permissions: PermissionItem[]; // Use array format for new roles
+  }>({
     name: "",
     description: "",
     permissions: [],
@@ -180,6 +193,15 @@ const RolePermissionsManager: React.FC = () => {
     try {
       setIsLoading(true);
 
+      // Convert array-based permissions to object format for API
+      const permissionsObj: Record<string, Permission> = {};
+      newRole.permissions.forEach((p) => {
+        permissionsObj[p.resource] = p.actions.reduce((acc, action) => {
+          acc[action] = true;
+          return acc;
+        }, {} as Permission);
+      });
+
       // Get authentication token
       const token = localStorage.getItem("token");
       const headers = {
@@ -192,7 +214,11 @@ const RolePermissionsManager: React.FC = () => {
         {
           method: "POST",
           headers,
-          body: JSON.stringify(newRole),
+          body: JSON.stringify({
+            name: newRole.name,
+            description: newRole.description,
+            permissions: permissionsObj,
+          }),
         }
       );
 
@@ -369,36 +395,29 @@ const RolePermissionsManager: React.FC = () => {
     isChecked: boolean
   ) => {
     if (editingRole) {
-      // Handle toggling for the role being edited
-      const updatedPermissions = [...editingRole.permissions];
-      const resourceIndex = updatedPermissions.findIndex(
-        (p) => p.resource === resource
-      );
+      // Clone the permissions (regardless of being a Map or object)
+      let updatedPermissions:
+        | Map<string, Permission>
+        | Record<string, Permission>;
 
-      if (resourceIndex >= 0) {
-        // Resource exists in permissions
-        if (isChecked) {
-          // Add action if it doesn't exist
-          if (!updatedPermissions[resourceIndex].actions.includes(action)) {
-            updatedPermissions[resourceIndex].actions.push(action);
-          }
-        } else {
-          // Remove action
-          updatedPermissions[resourceIndex].actions = updatedPermissions[
-            resourceIndex
-          ].actions.filter((a) => a !== action);
+      if (editingRole.permissions instanceof Map) {
+        updatedPermissions = new Map(editingRole.permissions);
 
-          // Remove the resource entry if no actions left
-          if (updatedPermissions[resourceIndex].actions.length === 0) {
-            updatedPermissions.splice(resourceIndex, 1);
-          }
-        }
-      } else if (isChecked) {
-        // Resource doesn't exist, add it with the action
-        updatedPermissions.push({
-          resource,
-          actions: [action],
+        // Get or create the resource permissions
+        const resourcePerms = updatedPermissions.get(resource) || {};
+
+        // Update the specific action
+        updatedPermissions.set(resource, {
+          ...resourcePerms,
+          [action]: isChecked,
         });
+      } else {
+        // Handle as object
+        updatedPermissions = { ...editingRole.permissions };
+        updatedPermissions[resource] = {
+          ...(updatedPermissions[resource] || {}),
+          [action]: isChecked,
+        };
       }
 
       setEditingRole({
@@ -406,32 +425,33 @@ const RolePermissionsManager: React.FC = () => {
         permissions: updatedPermissions,
       });
     } else if (isCreatingRole) {
-      // Handle toggling for the new role being created
+      // Continue to use the array structure for new role creation
       const updatedPermissions = [...newRole.permissions];
       const resourceIndex = updatedPermissions.findIndex(
         (p) => p.resource === resource
       );
 
       if (resourceIndex >= 0) {
-        // Resource exists in permissions
         if (isChecked) {
-          // Add action if it doesn't exist
           if (!updatedPermissions[resourceIndex].actions.includes(action)) {
-            updatedPermissions[resourceIndex].actions.push(action);
+            updatedPermissions[resourceIndex] = {
+              ...updatedPermissions[resourceIndex],
+              actions: [...updatedPermissions[resourceIndex].actions, action],
+            };
           }
         } else {
-          // Remove action
-          updatedPermissions[resourceIndex].actions = updatedPermissions[
-            resourceIndex
-          ].actions.filter((a) => a !== action);
+          updatedPermissions[resourceIndex] = {
+            ...updatedPermissions[resourceIndex],
+            actions: updatedPermissions[resourceIndex].actions.filter(
+              (a) => a !== action
+            ),
+          };
 
-          // Remove the resource entry if no actions left
           if (updatedPermissions[resourceIndex].actions.length === 0) {
             updatedPermissions.splice(resourceIndex, 1);
           }
         }
       } else if (isChecked) {
-        // Resource doesn't exist, add it with the action
         updatedPermissions.push({
           resource,
           actions: [action],
@@ -448,22 +468,35 @@ const RolePermissionsManager: React.FC = () => {
   // Check if a permission is active for the current role
   const isPermissionActive = (resource: string, action: string): boolean => {
     if (editingRole) {
-      return !!editingRole.permissions.find(
-        (p) => p.resource === resource && p.actions.includes(action)
-      );
+      const permissions = editingRole.permissions;
+      if (permissions instanceof Map) {
+        const resourcePermissions = permissions.get(resource);
+        return resourcePermissions ? !!resourcePermissions[action] : false;
+      } else {
+        const resourcePermissions = permissions[resource];
+        return resourcePermissions ? !!resourcePermissions[action] : false;
+      }
     }
 
     if (isCreatingRole) {
-      return !!newRole.permissions.find(
-        (p) => p.resource === resource && p.actions.includes(action)
+      const resourcePermission = newRole.permissions.find(
+        (p) => p.resource === resource
       );
+      return resourcePermission
+        ? resourcePermission.actions.includes(action)
+        : false;
     }
 
     if (!selectedRole) return false;
 
-    return !!selectedRole.permissions.find(
-      (p) => p.resource === resource && p.actions.includes(action)
-    );
+    const permissions = selectedRole.permissions;
+    if (permissions instanceof Map) {
+      const resourcePermissions = permissions.get(resource);
+      return resourcePermissions ? !!resourcePermissions[action] : false;
+    } else {
+      const resourcePermissions = permissions[resource];
+      return resourcePermissions ? !!resourcePermissions[action] : false;
+    }
   };
 
   // Filter roles based on search term

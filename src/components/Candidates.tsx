@@ -16,6 +16,8 @@ interface Candidate {
   bio?: string;
   manifesto?: string;
   votes?: number;
+  position: string; // Add the position property
+  positionId?: string; // Add positionId for reference
 }
 
 type CandidatesByPosition = {
@@ -35,6 +37,10 @@ const Candidates: React.FC = () => {
   const [unselectedPositions, setUnselectedPositions] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
+  const [refreshInterval, setRefreshInterval] = useState<NodeJS.Timeout | null>(
+    null
+  );
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const navigate = useNavigate();
   const { user } = useUser();
   const topRef = useRef<HTMLDivElement>(null);
@@ -46,12 +52,13 @@ const Candidates: React.FC = () => {
       return;
     }
 
-    const fetchCandidates = async () => {
+    const fetchCandidatesData = async () => {
       try {
         setLoading(true);
         const response = await axios.get(`${apiUrl}/api/candidates/byPosition`);
         setCandidatesByPosition(response.data);
         setPositions(Object.keys(response.data));
+        setLastUpdated(new Date());
       } catch (error) {
         console.error("Error fetching candidates:", error);
         setError("Failed to load candidates. Please try again.");
@@ -60,31 +67,18 @@ const Candidates: React.FC = () => {
       }
     };
 
-    fetchCandidates();
+    // Initial fetch
+    fetchCandidatesData();
 
-    window.scrollTo(0, 0);
-    if (topRef.current) {
-      topRef.current.scrollIntoView({ behavior: "instant" });
-    }
+    // Set up auto-refresh every 30 seconds
+    const interval = setInterval(fetchCandidatesData, 30000);
+    setRefreshInterval(interval);
 
-    if (location.state) {
-      const {
-        selectedCandidates: prevSelected,
-        noneSelected: prevNoneSelected,
-      } = location.state as {
-        selectedCandidates: Record<string, Candidate>;
-        noneSelected: Record<string, boolean>;
-      };
-
-      if (prevSelected) {
-        setSelectedCandidates(prevSelected);
-      }
-
-      if (prevNoneSelected) {
-        setNoneSelected(prevNoneSelected);
-      }
-    }
-  }, [user, navigate, location.state, apiUrl]);
+    // Clean up on unmount
+    return () => {
+      if (refreshInterval) clearInterval(refreshInterval);
+    };
+  }, [user, navigate, apiUrl]);
 
   useEffect(() => {
     const unselected = positions.filter(
@@ -317,6 +311,43 @@ const Candidates: React.FC = () => {
             </div>
           </div>
 
+          {/* Add loading indicator */}
+          {loading && (
+            <div className="mb-4 rounded-lg bg-indigo-50 p-4 shadow-sm text-center">
+              <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mr-2"></div>
+              <span className="text-indigo-800">Loading candidates...</span>
+            </div>
+          )}
+
+          {/* Add last updated timestamp */}
+          {lastUpdated && (
+            <div className="mb-4 text-right text-sm text-gray-500">
+              Last updated: {lastUpdated.toLocaleTimeString()}
+              <button
+                onClick={() => {
+                  setLoading(true);
+                  axios
+                    .get(`${apiUrl}/api/candidates/byPosition`)
+                    .then((response) => {
+                      setCandidatesByPosition(response.data);
+                      setPositions(Object.keys(response.data));
+                      setLastUpdated(new Date());
+                    })
+                    .catch((error) => {
+                      console.error("Error refreshing candidates:", error);
+                      setError(
+                        "Failed to refresh candidates. Please try again."
+                      );
+                    })
+                    .finally(() => setLoading(false));
+                }}
+                className="ml-2 text-indigo-600 hover:text-indigo-800"
+              >
+                Refresh
+              </button>
+            </div>
+          )}
+
           {Object.entries(filteredCandidates).map(
             ([position, positionCandidates]) => {
               const isSelected =
@@ -337,7 +368,10 @@ const Candidates: React.FC = () => {
                   </h2>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
-                    {positionCandidates.map((candidate) => (
+                    {(Array.isArray(positionCandidates)
+                      ? positionCandidates
+                      : []
+                    ).map((candidate) => (
                       <div
                         key={candidate.id}
                         className={`bg-white rounded-lg overflow-hidden cursor-pointer transition-all duration-200 ${

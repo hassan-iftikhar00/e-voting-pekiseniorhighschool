@@ -62,7 +62,7 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   children,
   requiredPermission,
 }) => {
-  const { hasPermission, isAuthenticated, loading } = useUser();
+  const { hasPermission, isAuthenticated, loading } = useUser(); // Ensure hasPermission is destructured here
   const location = useLocation();
 
   if (loading) {
@@ -95,17 +95,149 @@ const ElectionManager: React.FC = () => {
     schoolLogo: null,
   });
 
-  useEffect(() => {
-    if (!user || user.role !== "admin") {
-      navigate("/login");
+  const [currentElection, setCurrentElection] = useState<{
+    title: string;
+    date: string;
+    startDate?: string;
+    endDate?: string;
+    startTime: string;
+    endTime: string;
+    isActive: boolean;
+  } | null>(null);
+
+  const fetchCurrentElection = async () => {
+    try {
+      // Get authentication token
+      const token = localStorage.getItem("token");
+      const headers = {
+        "Content-Type": "application/json",
+        Authorization: token ? `Bearer ${token}` : "",
+      };
+
+      const response = await fetch(
+        `${
+          import.meta.env.VITE_API_URL || "http://localhost:5000"
+        }/api/election/status`,
+        {
+          headers,
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch election status: ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log("Current election data:", data);
+      setCurrentElection(data);
+    } catch (error) {
+      console.error("Error fetching election data:", error);
     }
-  }, [user, navigate]);
+  };
+
+  const formatElectionDate = (dateString?: string) => {
+    if (!dateString) return "Unknown date";
+
+    try {
+      const date = new Date(dateString);
+      return date.toLocaleDateString("en-US", {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+      });
+    } catch (e) {
+      console.error("Error formatting date:", e);
+      return dateString;
+    }
+  };
+
+  const updateTimeRemaining = () => {
+    if (!currentElection) return;
+
+    const now = new Date();
+    let targetDate;
+
+    // Determine which date to use (endDate or date)
+    if (currentElection.isActive) {
+      // For active elections, target is the end date
+      const dateStr = currentElection.endDate || currentElection.date;
+      const [year, month, day] = dateStr.split("-").map(Number);
+      const [hours, minutes] = (currentElection.endTime || "17:00")
+        .split(":")
+        .map(Number);
+
+      targetDate = new Date(year, month - 1, day, hours, minutes);
+    } else {
+      // For inactive elections, target is the start date
+      const dateStr = currentElection.startDate || currentElection.date;
+      const [year, month, day] = dateStr.split("-").map(Number);
+      const [hours, minutes] = (currentElection.startTime || "08:00")
+        .split(":")
+        .map(Number);
+
+      targetDate = new Date(year, month - 1, day, hours, minutes);
+    }
+
+    // Calculate difference
+    const difference = targetDate.getTime() - now.getTime();
+
+    // If difference is negative, the target date is in the past
+    if (difference <= 0) {
+      if (currentElection.isActive) {
+        setElectionStatus("ended");
+        setTimeRemaining("Election has ended");
+      } else {
+        setElectionStatus("not-started");
+        setTimeRemaining("Election start date has passed");
+      }
+      return;
+    }
+
+    // Calculate remaining time
+    const days = Math.floor(difference / (1000 * 60 * 60 * 24));
+    const hours = Math.floor(
+      (difference % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)
+    );
+    const minutes = Math.floor((difference % (1000 * 60 * 60)) / (1000 * 60));
+    const seconds = Math.floor((difference % (1000 * 60)) / 1000);
+
+    let timeString = "";
+    if (days > 0) timeString += `${days}d `;
+    if (hours > 0) timeString += `${hours}h `;
+    if (minutes > 0) timeString += `${minutes}m `;
+    timeString += `${seconds}s`;
+
+    // Update state with new values
+    setElectionStatus(currentElection.isActive ? "active" : "not-started");
+    setTimeRemaining(timeString);
+  };
+
+  useEffect(() => {
+    if (!user) {
+      navigate("/login");
+    } else if (user.role !== "admin") {
+      navigate("/login");
+    } else {
+      // Fetch election data once on component mount
+      fetchCurrentElection();
+
+      // Set up timer to update countdown
+      const timer = setInterval(() => {
+        if (currentElection) {
+          updateTimeRemaining();
+        }
+      }, 1000);
+
+      return () => clearInterval(timer);
+    }
+  }, [user, navigate]); // Remove currentElection from dependencies array
 
   const handleLogout = () => {
     logout();
     navigate("/login");
   };
 
+  // Add this early return to make TypeScript happy
   if (!user) {
     return null;
   }
@@ -116,6 +248,7 @@ const ElectionManager: React.FC = () => {
       : "text-indigo-100 hover:bg-indigo-700 hover:text-white";
   };
 
+  // Now TypeScript knows user cannot be null below this point
   return (
     <div className="h-screen flex overflow-hidden bg-gray-100">
       {/* Mobile sidebar overlay */}
@@ -349,25 +482,34 @@ const ElectionManager: React.FC = () => {
                   <div className="flex items-center space-x-2 bg-indigo-50 px-3 py-1.5 rounded-lg text-sm">
                     <Calendar className="h-4 w-4 text-indigo-600" />
                     <span className="text-indigo-700 font-bold">
-                      Election Date: 15th May, 2025
+                      Election Date:{" "}
+                      {currentElection
+                        ? formatElectionDate(
+                            currentElection.endDate || currentElection.date
+                          )
+                        : "Loading..."}
                     </span>
                   </div>
                   <div
                     className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg text-sm font-bold ${
-                      electionStatus === "not-started"
-                        ? "bg-yellow-100 text-yellow-800"
-                        : electionStatus === "active"
+                      !currentElection
+                        ? "bg-gray-100 text-gray-600"
+                        : currentElection.isActive
                         ? "bg-green-100 text-green-800"
-                        : "bg-red-100 text-red-800"
+                        : "bg-yellow-100 text-yellow-800"
                     }`}
                   >
                     <Clock className="h-4 w-4" />
                     <span>
-                      {electionStatus === "not-started"
-                        ? `Election starts in: ${timeRemaining}`
-                        : electionStatus === "active"
-                        ? `Election ends in: ${timeRemaining}`
-                        : "Election has ended"}
+                      {!currentElection
+                        ? "Loading..."
+                        : currentElection.isActive
+                        ? `Election in progress${
+                            timeRemaining !== "Election has ended"
+                              ? ` • Ends in: ${timeRemaining}`
+                              : ""
+                          }`
+                        : `Election starts in: ${timeRemaining}`}
                     </span>
                   </div>
                 </div>

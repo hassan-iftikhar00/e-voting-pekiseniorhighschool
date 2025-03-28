@@ -14,6 +14,7 @@ import {
   Filter,
   Trash2,
   Info,
+  ChevronDown,
 } from "lucide-react";
 import { useUser } from "../../context/UserContext";
 
@@ -21,14 +22,19 @@ import { useUser } from "../../context/UserContext";
 interface ActivityLog {
   _id: string;
   userId: string;
-  user?: {
-    _id: string;
-    username: string;
-    fullName: string;
-    role?: {
-      name: string;
-    };
-  };
+  user:
+    | string
+    | {
+        _id: string;
+        username: string;
+        fullName?: string;
+        role?:
+          | string
+          | {
+              name: string;
+            };
+        isAdmin?: boolean;
+      };
   action: string;
   entity: string;
   entityId: string;
@@ -41,14 +47,19 @@ const ActivityLogManager: React.FC = () => {
   const { hasPermission } = useUser();
   const [logs, setLogs] = useState<ActivityLog[]>([]);
   const [filteredLogs, setFilteredLogs] = useState<ActivityLog[]>([]);
+  const [displayedLogs, setDisplayedLogs] = useState<ActivityLog[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notification, setNotification] = useState<{
     type: "success" | "error";
     message: string;
   } | null>(null);
   const [showFilters, setShowFilters] = useState(false);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
+  const logsPerPage = 20; // Number of logs to load per batch
 
   // Filters
   const [filters, setFilters] = useState({
@@ -63,8 +74,8 @@ const ActivityLogManager: React.FC = () => {
   const canViewLogs = hasPermission("logs", "view");
   const canDeleteLogs = hasPermission("logs", "delete");
 
-  // Fetch logs from the API
-  const fetchLogs = async () => {
+  // Fetch logs from the API with pagination
+  const fetchLogs = async (reset = true) => {
     if (!canViewLogs) return;
 
     try {
@@ -78,8 +89,15 @@ const ActivityLogManager: React.FC = () => {
         Authorization: token ? `Bearer ${token}` : "",
       };
 
+      // Add pagination parameters
+      const pageToFetch = reset ? 1 : page;
+      const limit = logsPerPage;
+      const skip = reset ? 0 : (pageToFetch - 1) * logsPerPage;
+
       const response = await fetch(
-        `${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/logs`,
+        `${
+          import.meta.env.VITE_API_URL || "http://localhost:5000"
+        }/api/logs?limit=${limit}&skip=${skip}`,
         { headers }
       );
 
@@ -88,50 +106,74 @@ const ActivityLogManager: React.FC = () => {
       }
 
       const data = await response.json();
-      setLogs(data);
-      setFilteredLogs(data);
+
+      // If we received fewer logs than requested, there are no more logs to load
+      if (data.length < logsPerPage) {
+        setHasMore(false);
+      }
+
+      if (reset) {
+        setLogs(data);
+        setFilteredLogs(data);
+        setDisplayedLogs(data.slice(0, logsPerPage));
+        setPage(1);
+      } else {
+        // Append new logs to existing logs
+        setLogs((prevLogs) => [...prevLogs, ...data]);
+        setFilteredLogs((prevFilteredLogs) => {
+          // Apply current filters to the new logs
+          const newFilteredLogs = applyFilters([...prevFilteredLogs, ...data]);
+          return newFilteredLogs;
+        });
+        setPage((prevPage) => prevPage + 1);
+      }
     } catch (error: any) {
       console.error("Error fetching activity logs:", error);
       setError(error.message || "Failed to load activity logs");
     } finally {
       setIsLoading(false);
+      setIsLoadingMore(false);
     }
   };
 
-  // Load logs on component mount
-  useEffect(() => {
-    if (canViewLogs) {
-      fetchLogs();
-    }
-  }, [canViewLogs]);
+  // Function to handle loading more logs
+  const handleLoadMore = async () => {
+    if (isLoadingMore || !hasMore) return;
 
-  // Update filtered logs when filters or search term changes
-  useEffect(() => {
-    if (!logs.length) return;
+    setIsLoadingMore(true);
+    await fetchLogs(false);
+  };
 
-    let filtered = [...logs];
+  // Helper function to apply filters to logs
+  const applyFilters = (logsToFilter: ActivityLog[]) => {
+    let filtered = [...logsToFilter];
 
     // Apply search term
     if (searchTerm) {
       const term = searchTerm.toLowerCase();
       filtered = filtered.filter(
         (log) =>
-          (log.user?.username &&
-            log.user.username.toLowerCase().includes(term)) ||
-          (log.user?.fullName &&
-            log.user.fullName.toLowerCase().includes(term)) ||
+          (typeof log.user === "string" &&
+            log.user.toLowerCase().includes(term)) ||
+          (typeof log.user !== "string" &&
+            ((log.user.username &&
+              log.user.username.toLowerCase().includes(term)) ||
+              (log.user.fullName &&
+                log.user.fullName.toLowerCase().includes(term)))) ||
           log.action.toLowerCase().includes(term) ||
           log.entity.toLowerCase().includes(term) ||
           log.details.toLowerCase().includes(term)
       );
     }
 
-    // Apply filters
+    // Apply other filters (user, action, entity, date ranges)
     if (filters.user) {
       filtered = filtered.filter(
         (log) =>
-          log.user?.username === filters.user ||
-          log.user?.fullName === filters.user
+          (typeof log.user === "string" && log.user === filters.user) ||
+          (typeof log.user !== "string" &&
+            (log.user.username === filters.user ||
+              log.user.fullName === filters.user))
       );
     }
 
@@ -154,23 +196,43 @@ const ActivityLogManager: React.FC = () => {
       filtered = filtered.filter((log) => new Date(log.timestamp) <= toDate);
     }
 
-    // Sort by timestamp, newest first
-    filtered.sort(
-      (a, b) =>
-        new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-    );
+    return filtered;
+  };
 
+  // Load logs on component mount
+  useEffect(() => {
+    if (canViewLogs) {
+      fetchLogs();
+    }
+  }, [canViewLogs]);
+
+  // Update displayedLogs management to correctly handle pagination
+  useEffect(() => {
+    if (!logs.length) return;
+
+    const filtered = applyFilters(logs);
     setFilteredLogs(filtered);
-  }, [logs, searchTerm, filters]);
+
+    // Always update displayed logs when filters change
+    setDisplayedLogs(filtered.slice(0, page * logsPerPage));
+
+    // Check if there are more logs to display
+    setHasMore(filtered.length > page * logsPerPage);
+  }, [logs, searchTerm, filters, page]);
 
   // Get unique values for filter selects
   const getUniqueUsers = () => {
-    const users = logs
-      .filter((log) => log.user)
-      .map((log) => log.user?.fullName || log.user?.username)
-      .filter((value, index, self) => value && self.indexOf(value) === index);
+    // Filter out null/undefined values first, then deduplicate
+    const userNames = logs
+      .map((log) =>
+        typeof log.user === "string"
+          ? log.user
+          : log.user?.fullName || log.user?.username || null
+      )
+      .filter(Boolean); // Remove null/undefined values
 
-    return users;
+    // Deduplicate
+    return [...new Set(userNames)];
   };
 
   const getUniqueActions = () => {
@@ -203,7 +265,97 @@ const ActivityLogManager: React.FC = () => {
 
   // Format timestamp to readable date/time
   const formatTimestamp = (timestamp: string) => {
-    return new Date(timestamp).toLocaleString();
+    if (!timestamp) return "Unknown date";
+
+    try {
+      return new Date(timestamp).toLocaleString();
+    } catch (e) {
+      console.error("Error formatting timestamp:", e);
+      return "Invalid date";
+    }
+  };
+
+  // Add a helper function to safely render user information
+  const getUserDisplayName = (user: ActivityLog["user"]): string => {
+    if (!user) return "Unknown";
+
+    if (typeof user === "string") return user;
+
+    return user.fullName || user.username || "Unknown user";
+  };
+
+  // Add a helper function to safely get role name
+  const getUserRole = (user: ActivityLog["user"]): string => {
+    if (!user) return "";
+
+    if (typeof user === "string") return "";
+
+    if (typeof user.role === "string") return user.role;
+
+    return user.role?.name || "";
+  };
+
+  // Add a helper function to format the details field
+  const formatDetails = (details: any, action: string): React.ReactNode => {
+    // If details is a string, just return it
+    if (typeof details === "string") {
+      return details;
+    }
+
+    // If it's a login action, format it nicely
+    if (action === "user:login" && details) {
+      try {
+        // Handle both string JSON and object format
+        const loginInfo =
+          typeof details === "string" ? JSON.parse(details) : details;
+        return (
+          <div>
+            <p>
+              <span className="font-medium">Username:</span>{" "}
+              {loginInfo.username || "Unknown"}
+            </p>
+            <p>
+              <span className="font-medium">Role:</span>{" "}
+              {loginInfo.role || "None"}
+            </p>
+          </div>
+        );
+      } catch (e) {
+        console.error("Error parsing login details:", e);
+      }
+    }
+
+    // For other objects, stringify them properly
+    try {
+      return typeof details === "object"
+        ? JSON.stringify(details, null, 2)
+        : String(details);
+    } catch (e) {
+      return "Invalid details format";
+    }
+  };
+
+  // Add a text-only version for printing and export
+  const formatDetailsAsText = (details: any, action: string): string => {
+    if (typeof details === "string") {
+      return details;
+    }
+
+    if (action === "user:login" && details) {
+      try {
+        const loginInfo =
+          typeof details === "string" ? JSON.parse(details) : details;
+        return `Username: ${loginInfo.username || "Unknown"}, Role: ${
+          loginInfo.role || "None"
+        }`;
+      } catch (e) {
+        console.error("Error formatting login details:", e);
+      }
+    }
+
+    return typeof details === "object"
+      ? JSON.stringify(details)
+      : String(details);
   };
 
   // Handle clear logs
@@ -244,6 +396,7 @@ const ActivityLogManager: React.FC = () => {
 
       setLogs([]);
       setFilteredLogs([]);
+      setDisplayedLogs([]);
       setNotification({
         type: "success",
         message: "All activity logs have been cleared successfully",
@@ -301,7 +454,9 @@ const ActivityLogManager: React.FC = () => {
                 : ""
             }
             ${searchTerm ? `<p>Search term: "${searchTerm}"</p>` : ""}
-            <p>Showing ${filteredLogs.length} of ${logs.length} logs</p>
+            <p>Showing ${displayedLogs.length} of ${
+      filteredLogs.length
+    } logs</p>
           </div>
           
           <table>
@@ -316,19 +471,17 @@ const ActivityLogManager: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              ${filteredLogs
+              ${displayedLogs
                 .map(
                   (log) => `
                 <tr>
                   <td>${formatTimestamp(log.timestamp)}</td>
-                  <td>${
-                    log.user
-                      ? log.user.fullName || log.user.username
-                      : "Unknown"
-                  } ${log.user?.role ? `(${log.user.role.name})` : ""}</td>
+                  <td>${getUserDisplayName(log.user)} ${
+                    getUserRole(log.user) ? `(${getUserRole(log.user)})` : ""
+                  }</td>
                   <td>${log.action}</td>
                   <td>${log.entity}</td>
-                  <td>${log.details}</td>
+                  <td>${formatDetailsAsText(log.details, log.action)}</td>
                   <td>${log.ipAddress}</td>
                 </tr>
               `
@@ -354,14 +507,15 @@ const ActivityLogManager: React.FC = () => {
     // Create CSV content
     let csvContent = "Time,User,Role,Action,Entity,Details,IP Address\n";
 
-    filteredLogs.forEach((log) => {
-      const user = log.user
-        ? log.user.fullName || log.user.username
-        : "Unknown";
-      const role = log.user?.role ? log.user.role.name : "";
+    displayedLogs.forEach((log) => {
+      const user = getUserDisplayName(log.user);
+      const role = getUserRole(log.user);
 
-      // Escape quotes in fields to prevent CSV parsing issues
-      const escapedDetails = log.details.replace(/"/g, '""');
+      // Format details as text and escape quotes
+      const escapedDetails = formatDetailsAsText(
+        log.details,
+        log.action
+      ).replace(/"/g, '""');
 
       csvContent += `"${formatTimestamp(log.timestamp)}","${user}","${role}","${
         log.action
@@ -543,9 +697,11 @@ const ActivityLogManager: React.FC = () => {
                 value={filters.user}
                 onChange={(e) => handleFilterChange("user", e.target.value)}
               >
-                <option value="">All Users</option>
+                <option key="all-users" value="">
+                  All Users
+                </option>
                 {getUniqueUsers().map((user) => (
-                  <option key={user} value={user}>
+                  <option key={`user-${user}`} value={user || ""}>
                     {user}
                   </option>
                 ))}
@@ -561,9 +717,11 @@ const ActivityLogManager: React.FC = () => {
                 value={filters.action}
                 onChange={(e) => handleFilterChange("action", e.target.value)}
               >
-                <option value="">All Actions</option>
+                <option key="all-actions" value="">
+                  All Actions
+                </option>
                 {getUniqueActions().map((action) => (
-                  <option key={action} value={action}>
+                  <option key={`action-${action}`} value={action}>
                     {action}
                   </option>
                 ))}
@@ -579,9 +737,11 @@ const ActivityLogManager: React.FC = () => {
                 value={filters.entity}
                 onChange={(e) => handleFilterChange("entity", e.target.value)}
               >
-                <option value="">All Entities</option>
+                <option key="all-entities" value="">
+                  All Entities
+                </option>
                 {getUniqueEntities().map((entity) => (
-                  <option key={entity} value={entity}>
+                  <option key={`entity-${entity}`} value={entity}>
                     {entity}
                   </option>
                 ))}
@@ -658,100 +818,123 @@ const ActivityLogManager: React.FC = () => {
       {/* Activity Log Table */}
       <div className="bg-white shadow-md rounded-lg overflow-hidden">
         {filteredLogs.length > 0 ? (
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th
-                    scope="col"
-                    className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-                  >
-                    Time
-                  </th>
-                  <th
-                    scope="col"
-                    className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-                  >
-                    User
-                  </th>
-                  <th
-                    scope="col"
-                    className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-                  >
-                    Action
-                  </th>
-                  <th
-                    scope="col"
-                    className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-                  >
-                    Entity
-                  </th>
-                  <th
-                    scope="col"
-                    className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-                  >
-                    Details
-                  </th>
-                  <th
-                    scope="col"
-                    className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-                  >
-                    IP Address
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {filteredLogs.map((log) => (
-                  <tr key={log._id} className="hover:bg-gray-50">
-                    <td className="px-3 py-4 whitespace-nowrap">
-                      <div className="flex items-center text-sm text-gray-900">
-                        <Clock className="h-4 w-4 text-gray-500 mr-1" />
-                        {formatTimestamp(log.timestamp)}
-                      </div>
-                    </td>
-                    <td className="px-3 py-4 whitespace-nowrap">
-                      <div className="flex items-center">
-                        <User className="h-4 w-4 text-gray-500 mr-1" />
-                        <div>
-                          <div className="text-sm font-medium text-gray-900">
-                            {log.user
-                              ? log.user.fullName || log.user.username
-                              : "Unknown"}
-                          </div>
-                          {log.user?.role && (
-                            <div className="text-xs text-gray-500">
-                              {log.user.role.name}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-3 py-4 whitespace-nowrap">
-                      <div className="flex items-center">
-                        <Activity className="h-4 w-4 text-gray-500 mr-1" />
-                        <span className="text-sm text-gray-900">
-                          {log.action}
-                        </span>
-                      </div>
-                    </td>
-                    <td className="px-3 py-4 whitespace-nowrap">
-                      <span className="text-sm text-gray-900">
-                        {log.entity}
-                      </span>
-                    </td>
-                    <td className="px-3 py-4">
-                      <div className="text-sm text-gray-900 max-w-md break-words">
-                        {log.details}
-                      </div>
-                    </td>
-                    <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {log.ipAddress}
-                    </td>
+          <>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th
+                      scope="col"
+                      className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                    >
+                      Time
+                    </th>
+                    <th
+                      scope="col"
+                      className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                    >
+                      User
+                    </th>
+                    <th
+                      scope="col"
+                      className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                    >
+                      Action
+                    </th>
+                    <th
+                      scope="col"
+                      className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                    >
+                      Entity
+                    </th>
+                    <th
+                      scope="col"
+                      className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                    >
+                      Details
+                    </th>
+                    <th
+                      scope="col"
+                      className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                    >
+                      IP Address
+                    </th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {displayedLogs.map((log) => (
+                    <tr key={log._id} className="hover:bg-gray-50">
+                      <td className="px-3 py-4 whitespace-nowrap">
+                        <div className="flex items-center text-sm text-gray-900">
+                          <Clock className="h-4 w-4 text-gray-500 mr-1" />
+                          {formatTimestamp(log.timestamp)}
+                        </div>
+                      </td>
+                      <td className="px-3 py-4 whitespace-nowrap">
+                        <div className="flex items-center">
+                          <User className="h-4 w-4 text-gray-500 mr-1" />
+                          <div>
+                            <div className="text-sm font-medium text-gray-900">
+                              {getUserDisplayName(log.user)}
+                            </div>
+                            {getUserRole(log.user) && (
+                              <div className="text-xs text-gray-500">
+                                {getUserRole(log.user)}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-3 py-4 whitespace-nowrap">
+                        <div className="flex items-center">
+                          <Activity className="h-4 w-4 text-gray-500 mr-1" />
+                          <span className="text-sm text-gray-900">
+                            {log.action}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-3 py-4 whitespace-nowrap">
+                        <span className="text-sm text-gray-900">
+                          {log.entity}
+                        </span>
+                      </td>
+                      <td className="px-3 py-4">
+                        <div className="text-sm text-gray-900 max-w-md break-words whitespace-pre-wrap">
+                          {formatDetails(log.details, log.action)}
+                        </div>
+                      </td>
+                      <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {log.ipAddress}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Load More Button - Make sure it's visible by ensuring the condition is correct */}
+            {filteredLogs.length > displayedLogs.length && (
+              <div className="flex justify-center p-4 border-t border-gray-200 bg-gray-50">
+                <button
+                  onClick={handleLoadMore}
+                  disabled={isLoadingMore || !hasMore}
+                  className="inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                >
+                  {isLoadingMore ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                      Loading...
+                    </>
+                  ) : (
+                    <>
+                      <ChevronDown className="h-4 w-4 mr-2" />
+                      Load More Logs
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+          </>
         ) : (
           <div className="p-6 text-center">
             <div className="mx-auto h-12 w-12 text-gray-400">
@@ -775,11 +958,13 @@ const ActivityLogManager: React.FC = () => {
             <span>
               Showing{" "}
               <span className="font-medium text-gray-900">
-                {filteredLogs.length}
+                {displayedLogs.length}
               </span>{" "}
               of{" "}
-              <span className="font-medium text-gray-900">{logs.length}</span>{" "}
-              logs
+              <span className="font-medium text-gray-900">
+                {filteredLogs.length}
+              </span>{" "}
+              filtered logs
             </span>
           </div>
           {logs.length > 0 && (

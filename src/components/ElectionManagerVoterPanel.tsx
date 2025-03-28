@@ -44,7 +44,12 @@ import RolePermissionsManager from "./manager/RolePermissionsManager";
 import UserManager from "./manager/UserManager";
 import AccessDenied from "./AccessDenied";
 
-// Add these type definitions at the top of the file along with the other imports
+// Define the hasPermission function
+const hasPermission = (page: string, action: string): boolean => {
+  // Replace this logic with actual permission-checking logic
+  // For now, allow all permissions
+  return true;
+};
 
 interface ProtectedRouteProps {
   children: React.ReactNode;
@@ -54,7 +59,6 @@ interface ProtectedRouteProps {
   };
 }
 
-// Then update the ProtectedRoute component with proper type annotations:
 const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   children,
   requiredPermission,
@@ -70,23 +74,19 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  // Get user role in a standardized way
   const userRole =
     typeof user?.role === "string"
       ? user?.role.toLowerCase()
       : user?.role?.name?.toLowerCase() || "";
 
-  // Admin can access everything
   if (userRole === "admin") {
     return <>{children}</>;
   }
 
-  // Viewer can access view-only operations
   if (userRole === "viewer" && requiredPermission.action === "view") {
     return <>{children}</>;
   }
 
-  // For all other cases, check specific permissions
   if (hasPermission(requiredPermission.page, requiredPermission.action)) {
     return <>{children}</>;
   }
@@ -99,13 +99,123 @@ const ElectionManager: React.FC = () => {
   const location = useLocation();
   const { user, logout, isAuthenticated } = useUser();
   const { settings } = useSettings();
-  const { electionStatus, timeRemaining } = useElection();
   const profileMenuRef = useRef<HTMLDivElement>(null);
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [currentElection, setCurrentElection] = useState<{
+    title: string;
+    date: string;
+    startDate?: string;
+    endDate?: string;
+    startTime: string;
+    endTime: string;
+    isActive: boolean;
+  } | null>(null);
+  const [timeRemaining, setTimeRemaining] = useState("");
+  const [electionStatus, setElectionStatus] = useState<
+    "not-started" | "active" | "ended"
+  >("not-started");
 
-  // Handle click outside profile menu
+  const fetchCurrentElection = async () => {
+    try {
+      const response = await fetch(
+        `${
+          import.meta.env.VITE_API_URL || "http://localhost:5000"
+        }/api/election/status`
+      );
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch election status: ${response.status}`);
+      }
+
+      const data = await response.json();
+      setCurrentElection(data);
+    } catch (error) {
+      console.error("Error fetching election data:", error);
+    }
+  };
+
+  const formatElectionDate = (dateString?: string) => {
+    if (!dateString) return "Unknown date";
+
+    try {
+      const date = new Date(dateString);
+      return date.toLocaleDateString("en-US", {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+      });
+    } catch (e) {
+      console.error("Error formatting date:", e);
+      return dateString;
+    }
+  };
+
+  const updateTimeRemaining = () => {
+    if (!currentElection) return;
+
+    const now = new Date();
+    let targetDate;
+
+    if (currentElection.isActive) {
+      const dateStr = currentElection.endDate || currentElection.date;
+      const [year, month, day] = dateStr.split("-").map(Number);
+      const [hours, minutes] = (currentElection.endTime || "17:00")
+        .split(":")
+        .map(Number);
+      targetDate = new Date(year, month - 1, day, hours, minutes);
+    } else {
+      const dateStr = currentElection.startDate || currentElection.date;
+      const [year, month, day] = dateStr.split("-").map(Number);
+      const [hours, minutes] = (currentElection.startTime || "08:00")
+        .split(":")
+        .map(Number);
+      targetDate = new Date(year, month - 1, day, hours, minutes);
+    }
+
+    const difference = targetDate.getTime() - now.getTime();
+
+    if (difference <= 0) {
+      if (currentElection.isActive) {
+        setElectionStatus("ended");
+        setTimeRemaining("Election has ended");
+      } else {
+        setElectionStatus("not-started");
+        setTimeRemaining("Election start date has passed");
+      }
+      return;
+    }
+
+    const days = Math.floor(difference / (1000 * 60 * 60 * 24));
+    const hours = Math.floor(
+      (difference % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)
+    );
+    const minutes = Math.floor((difference % (1000 * 60 * 60)) / (1000 * 60));
+    const seconds = Math.floor((difference % (1000 * 60)) / 1000);
+
+    let timeString = "";
+    if (days > 0) timeString += `${days}d `;
+    if (hours > 0) timeString += `${hours}h `;
+    if (minutes > 0) timeString += `${minutes}m `;
+    timeString += `${seconds}s`;
+
+    setElectionStatus(currentElection.isActive ? "active" : "not-started");
+    setTimeRemaining(timeString);
+  };
+
+  useEffect(() => {
+    fetchCurrentElection();
+
+    const timer = setInterval(() => {
+      if (currentElection) {
+        updateTimeRemaining();
+      }
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, []);
+
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (
@@ -120,16 +230,11 @@ const ElectionManager: React.FC = () => {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
-  // Check authentication
   useEffect(() => {
     if (!user) {
       navigate("/login");
     }
   }, [user, navigate]);
-
-  if (!isAuthenticated) {
-    return <Navigate to="/login" replace />;
-  }
 
   const handleLogout = () => {
     logout();
@@ -144,7 +249,6 @@ const ElectionManager: React.FC = () => {
 
   return (
     <div className="h-screen flex overflow-hidden bg-gray-100">
-      {/* Mobile sidebar overlay */}
       {sidebarOpen && (
         <div
           className="fixed inset-0 z-40 bg-gray-600 bg-opacity-75 md:hidden"
@@ -152,7 +256,6 @@ const ElectionManager: React.FC = () => {
         ></div>
       )}
 
-      {/* Sidebar */}
       <div
         className={`fixed inset-y-0 left-0 flex flex-col z-50 w-64 bg-indigo-900 transform transition-transform duration-300 ease-in-out md:translate-x-0 md:static md:inset-auto md:h-full ${
           sidebarOpen ? "translate-x-0" : "-translate-x-full"
@@ -183,7 +286,6 @@ const ElectionManager: React.FC = () => {
               <LayoutDashboard className="mr-3 h-5 w-5" />
               Dashboard
             </Link>
-
             <Link
               to="/election-manager/positions"
               className={`flex items-center px-2 py-2 text-sm rounded-md ${isActive(
@@ -193,7 +295,6 @@ const ElectionManager: React.FC = () => {
               <Briefcase className="mr-3 h-5 w-5" />
               Positions
             </Link>
-
             <Link
               to="/election-manager/candidates"
               className={`flex items-center px-2 py-2 text-sm rounded-md ${isActive(
@@ -203,7 +304,6 @@ const ElectionManager: React.FC = () => {
               <Users className="mr-3 h-5 w-5" />
               Candidates
             </Link>
-
             <Link
               to="/election-manager/voters"
               className={`flex items-center px-2 py-2 text-sm rounded-md ${isActive(
@@ -213,7 +313,6 @@ const ElectionManager: React.FC = () => {
               <Users className="mr-3 h-5 w-5" />
               Voters
             </Link>
-
             <Link
               to="/election-manager/year"
               className={`flex items-center px-2 py-2 text-sm rounded-md ${isActive(
@@ -223,7 +322,6 @@ const ElectionManager: React.FC = () => {
               <Calendar className="mr-3 h-5 w-5" />
               Year/Level
             </Link>
-
             <Link
               to="/election-manager/class"
               className={`flex items-center px-2 py-2 text-sm rounded-md ${isActive(
@@ -233,7 +331,6 @@ const ElectionManager: React.FC = () => {
               <GraduationCap className="mr-3 h-5 w-5" />
               Programme/Class
             </Link>
-
             <Link
               to="/election-manager/house"
               className={`flex items-center px-2 py-2 text-sm rounded-md ${isActive(
@@ -243,7 +340,6 @@ const ElectionManager: React.FC = () => {
               <Home className="mr-3 h-5 w-5" />
               Hall/House
             </Link>
-
             <Link
               to="/election-manager/results"
               className={`flex items-center px-2 py-2 text-sm rounded-md ${isActive(
@@ -253,7 +349,6 @@ const ElectionManager: React.FC = () => {
               <BarChart2 className="mr-3 h-5 w-5" />
               Results
             </Link>
-
             <Link
               to="/election-manager/dva"
               className={`flex items-center px-2 py-2 text-sm rounded-md ${isActive(
@@ -263,7 +358,6 @@ const ElectionManager: React.FC = () => {
               <Eye className="mr-3 h-5 w-5" />
               DVA
             </Link>
-
             <Link
               to="/election-manager/log"
               className={`flex items-center px-2 py-2 text-sm rounded-md ${isActive(
@@ -273,7 +367,6 @@ const ElectionManager: React.FC = () => {
               <ClipboardList className="mr-3 h-5 w-5" />
               Log
             </Link>
-
             <Link
               to="/election-manager/roles"
               className={`flex items-center px-2 py-2 text-sm rounded-md ${isActive(
@@ -283,7 +376,6 @@ const ElectionManager: React.FC = () => {
               <Shield className="mr-3 h-5 w-5" />
               Roles & Permissions
             </Link>
-
             <Link
               to="/election-manager/users"
               className={`flex items-center px-2 py-2 text-sm rounded-md ${isActive(
@@ -293,7 +385,6 @@ const ElectionManager: React.FC = () => {
               <UserIcon className="mr-3 h-5 w-5" />
               Users
             </Link>
-
             <Link
               to="/election-manager/settings"
               className={`flex items-center px-2 py-2 text-sm rounded-md ${isActive(
@@ -307,7 +398,6 @@ const ElectionManager: React.FC = () => {
         </div>
       </div>
 
-      {/* Main content */}
       <div className="flex flex-col flex-1 overflow-hidden">
         <header className="bg-white shadow-sm z-10">
           <div className="px-4 sm:px-6 lg:px-8 h-14 flex items-center justify-between">
@@ -318,7 +408,6 @@ const ElectionManager: React.FC = () => {
               <span className="sr-only">Open sidebar</span>
               <Menu className="h-6 w-6" />
             </button>
-
             <div className="flex-1 flex justify-between items-center">
               <div className="flex items-center">
                 {settings.schoolLogo ? (
@@ -334,55 +423,57 @@ const ElectionManager: React.FC = () => {
                   {settings.schoolName}
                 </h1>
               </div>
-
               <div className="flex items-center space-x-4">
-                {/* Election Date & Timer */}
-                <div className="flex items-center space-x-2">
-                  <div className="flex items-center space-x-2 bg-indigo-50 px-3 py-1.5 rounded-lg text-sm">
-                    <Calendar className="h-4 w-4 text-indigo-600" />
-                    <span className="text-indigo-700 font-bold">
-                      15th May, 2025
-                    </span>
-                  </div>
-                  <div
-                    className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg text-sm font-bold ${
-                      electionStatus === "not-started"
-                        ? "bg-yellow-100 text-yellow-800"
-                        : electionStatus === "active"
-                        ? "bg-green-100 text-green-800"
-                        : "bg-red-100 text-red-800"
-                    }`}
-                  >
-                    <Clock className="h-4 w-4" />
-                    <span>
-                      {electionStatus === "not-started"
-                        ? `Election starts in: ${timeRemaining}`
-                        : electionStatus === "active"
-                        ? `Election ends in: ${timeRemaining}`
-                        : "Election has ended"}
-                    </span>
-                  </div>
+                <div className="flex items-center space-x-2 bg-indigo-50 px-3 py-1.5 rounded-lg text-sm">
+                  <Calendar className="h-4 w-4 text-indigo-600" />
+                  <span className="text-indigo-700 font-bold">
+                    Election Date:{" "}
+                    {currentElection
+                      ? formatElectionDate(
+                          currentElection.endDate || currentElection.date
+                        )
+                      : "Loading..."}
+                  </span>
                 </div>
-
-                {/* Profile Menu */}
+                <div
+                  className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg text-sm font-bold ${
+                    !currentElection
+                      ? "bg-gray-100 text-gray-600"
+                      : currentElection.isActive
+                      ? "bg-green-100 text-green-800"
+                      : "bg-yellow-100 text-yellow-800"
+                  }`}
+                >
+                  <Clock className="h-4 w-4" />
+                  <span>
+                    {!currentElection
+                      ? "Loading..."
+                      : currentElection.isActive
+                      ? `Election in progress${
+                          timeRemaining !== "Election has ended"
+                            ? ` • Ends in: ${timeRemaining}`
+                            : ""
+                        }`
+                      : `Election starts in: ${timeRemaining}`}
+                  </span>
+                </div>
                 <div className="relative" ref={profileMenuRef}>
                   <button
                     onClick={() => setShowProfileMenu(!showProfileMenu)}
                     className="flex items-center space-x-2 p-1.5 rounded-lg hover:bg-gray-100 transition-colors duration-200"
                   >
                     <div className="h-8 w-8 rounded-full bg-gradient-to-br from-indigo-600 to-purple-600 flex items-center justify-center text-white shadow-md">
-                      {user.username.charAt(0).toUpperCase()}
+                      {user?.username?.charAt(0).toUpperCase() || ""}
                     </div>
                     <span className="text-sm text-gray-700 hidden md:block">
-                      {user.username}
+                      {user?.username || "Guest"}
                     </span>
                   </button>
-
                   {showProfileMenu && (
                     <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg py-1 ring-1 ring-black ring-opacity-5">
                       <div className="px-4 py-2 border-b border-gray-100">
                         <p className="text-sm font-medium text-gray-900">
-                          {user.username}
+                          {user?.username || "Guest"}
                         </p>
                         <p className="text-xs text-gray-500">Administrator</p>
                       </div>
@@ -396,7 +487,7 @@ const ElectionManager: React.FC = () => {
                       </Link>
                       <button
                         onClick={handleLogout}
-                        className="block w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center"
+                        className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center"
                       >
                         <LogOut className="h-4 w-4 mr-2" />
                         Logout

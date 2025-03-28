@@ -103,6 +103,22 @@ const DetailedVoteAnalysis: React.FC = () => {
       );
 
       if (!response.ok) {
+        if (response.status === 404) {
+          // Handle specifically the case where the endpoint is not found or no data
+          console.warn("Analytics endpoint not found or no data available.");
+          // Set empty data with default values instead of throwing
+          setMetrics({
+            totalVotes: 0,
+            totalEligibleVoters: 0,
+            turnoutPercentage: 0,
+            averageVotesPerPosition: 0,
+            votingTimeline: [],
+            byClass: [],
+            byHouse: [],
+            byYear: [],
+          });
+          return;
+        }
         throw new Error(`Failed to fetch analytics: ${response.status}`);
       }
 

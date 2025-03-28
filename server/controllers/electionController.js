@@ -3,6 +3,7 @@ import Voter from "../models/Voter.js";
 import Position from "../models/Position.js"; // Added import
 import Candidate from "../models/Candidate.js"; // Added import
 import Vote from "../models/Vote.js"; // Added import
+import Setting from "../models/Setting.js"; // Add this import
 
 // Get election statistics
 export const getElectionStats = async (req, res) => {
@@ -101,59 +102,72 @@ export const getElectionStats = async (req, res) => {
   }
 };
 
-// Get election status and time
+// Get election status
 export const getElectionStatus = async (req, res) => {
   try {
-    const currentElection = await Election.findOne({ isCurrent: true });
+    const election = await Election.findOne({ isActive: true });
 
-    if (!currentElection) {
-      // Return a default status instead of 404 error
+    if (!election) {
       return res.status(200).json({
-        status: "not-started",
-        electionDate: "",
-        startTime: "",
-        endTime: "",
-        targetTime: null,
-        message: "No active election found",
+        isActive: false,
+        resultsPublished: false,
       });
     }
 
-    const now = new Date();
-    const electionDate = currentElection.date;
-    const startTime = `${electionDate}T${currentElection.startTime}`;
-    const endTime = `${electionDate}T${currentElection.endTime}`;
+    // IMPORTANT: Get the settings to get the correct end date
+    const settings = await Setting.findOne();
 
-    const startDate = new Date(startTime);
-    const endDate = new Date(endTime);
+    // When sending election status to the client, ensure we prioritize isActive
+    // over the stored status field for consistency
+    const effectiveStatus = election.isActive ? "active" : election.status;
 
-    let status = "not-started";
-    let targetTime;
+    // Try to parse dates in case they're in MM/DD/YYYY format
+    const parseDate = (dateString) => {
+      if (!dateString) return null;
 
-    if (now < startDate) {
-      status = "not-started";
-      targetTime = startDate;
-    } else if (now < endDate) {
-      status = "active";
-      targetTime = endDate;
-    } else {
-      status = "ended";
-      targetTime = null;
-    }
+      if (dateString.includes("/")) {
+        const parts = dateString.split("/");
+        if (parts.length === 3) {
+          const [month, day, year] = parts;
+          return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+        }
+      }
+      return dateString;
+    };
 
-    // Update the election status in the database
-    if (currentElection.status !== status) {
-      currentElection.status = status;
-      await currentElection.save();
-    }
+    // Use votingEndDate from settings if available
+    const startDate = parseDate(
+      election.startDate || settings?.votingStartDate || election.date
+    );
+    const endDate = parseDate(
+      settings?.votingEndDate || election.endDate || election.date
+    );
+
+    console.log("Sending election status data:", {
+      isActive: election.isActive,
+      status: effectiveStatus,
+      startDate,
+      endDate,
+      date: election.date,
+      startTime: election.startTime,
+      endTime: election.endTime,
+      // Debug info
+      settingsStartDate: settings?.votingStartDate,
+      settingsEndDate: settings?.votingEndDate,
+    });
 
     res.status(200).json({
-      status,
-      electionDate: currentElection.date,
-      startTime: currentElection.startTime,
-      endTime: currentElection.endTime,
-      targetTime: targetTime ? targetTime.toISOString() : null,
+      isActive: election.isActive,
+      status: effectiveStatus,
+      resultsPublished: election.resultsPublished || false,
+      startDate: startDate,
+      endDate: endDate,
+      date: election.date, // Keep the original date field as fallback
+      startTime: election.startTime,
+      endTime: election.endTime,
     });
   } catch (error) {
+    console.error("Error getting election status:", error);
     res.status(500).json({ message: "Server error", error: error.message });
   }
 };
@@ -440,6 +454,161 @@ export const getDetailedVoteAnalysis = async (req, res) => {
     res.status(200).json(detailedVoteData);
   } catch (error) {
     console.error("Error getting detailed vote analysis:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
+// Toggle election status
+export const toggleElectionStatus = async (req, res) => {
+  try {
+    console.log("Toggling election status...");
+
+    // Find the current election
+    const currentElection = await Election.findOne({ isCurrent: true });
+
+    if (!currentElection) {
+      console.log("No active election found");
+      return res.status(404).json({ message: "No active election found" });
+    }
+
+    // Toggle the active status
+    currentElection.isActive = !currentElection.isActive;
+
+    // Always update the status field based on isActive to maintain consistency
+    if (currentElection.isActive) {
+      currentElection.status = "active";
+    } else {
+      // When deactivating, set to not-started as the safest option
+      currentElection.status = "not-started";
+    }
+
+    await currentElection.save();
+
+    console.log(
+      `Election status toggled to: ${
+        currentElection.isActive ? "active" : "inactive"
+      }, status: ${currentElection.status}`
+    );
+    console.log("Election document after save:", currentElection);
+
+    // Also update the associated setting for better synchronization
+    const settings = await Setting.findOne();
+    if (settings) {
+      settings.isActive = currentElection.isActive;
+      await settings.save();
+      console.log("Settings also updated with isActive:", settings.isActive);
+    }
+
+    // Return the updated election data
+    res.status(200).json({
+      isActive: currentElection.isActive,
+      status: currentElection.status,
+      message: `Election ${
+        currentElection.isActive ? "activated" : "deactivated"
+      } successfully`,
+    });
+  } catch (error) {
+    console.error("Error toggling election status:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
+// Get election results
+export const getResults = async (req, res) => {
+  try {
+    // Get the current active election
+    const election = await Election.findOne({ isActive: true });
+    if (!election) {
+      return res.status(404).json({ message: "No active election found" });
+    }
+
+    // Get all positions
+    const positions = await Position.find().sort({ priority: 1 });
+
+    // Get results for each position
+    const results = await Promise.all(
+      positions.map(async (position) => {
+        // Get candidates for this position
+        const candidates = await Candidate.find({ position: position._id });
+
+        // Get vote counts for each candidate
+        const candidateResults = await Promise.all(
+          candidates.map(async (candidate) => {
+            const voteCount = await Vote.countDocuments({
+              candidate: candidate._id,
+              election: election._id,
+            });
+
+            return {
+              candidate,
+              voteCount,
+              percentage: 0, // Will be calculated after getting total
+            };
+          })
+        );
+
+        // Calculate total votes for the position
+        const totalVotes = candidateResults.reduce(
+          (sum, item) => sum + item.voteCount,
+          0
+        );
+
+        // Calculate percentages
+        candidateResults.forEach((item) => {
+          item.percentage =
+            totalVotes > 0 ? (item.voteCount / totalVotes) * 100 : 0;
+        });
+
+        // Sort by votes (highest first)
+        candidateResults.sort((a, b) => b.voteCount - a.voteCount);
+
+        return {
+          position,
+          candidates: candidateResults,
+          totalVotes,
+        };
+      })
+    );
+
+    // Get voter statistics
+    const totalEligibleVoters = await Voter.countDocuments();
+    const votedVoters = await Voter.countDocuments({ hasVoted: true });
+
+    const stats = {
+      total: totalEligibleVoters,
+      voted: votedVoters,
+      notVoted: totalEligibleVoters - votedVoters,
+      percentage:
+        totalEligibleVoters > 0 ? (votedVoters / totalEligibleVoters) * 100 : 0,
+    };
+
+    res.status(200).json({ results, stats });
+  } catch (error) {
+    console.error("Error getting election results:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
+// Toggle results publication status
+export const toggleResultsPublication = async (req, res) => {
+  try {
+    const { published } = req.body;
+
+    // Find the current active election
+    const election = await Election.findOne({ isActive: true });
+    if (!election) {
+      return res.status(404).json({ message: "No active election found" });
+    }
+
+    // Update the published status
+    election.resultsPublished = published;
+    await election.save();
+
+    res.status(200).json({
+      resultsPublished: election.resultsPublished,
+    });
+  } catch (error) {
+    console.error("Error toggling results publication:", error);
     res.status(500).json({ message: "Server error", error: error.message });
   }
 };

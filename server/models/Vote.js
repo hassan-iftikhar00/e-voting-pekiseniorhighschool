@@ -1,30 +1,40 @@
 import mongoose from "mongoose";
+const { Schema } = mongoose;
 
-const voteSchema = new mongoose.Schema({
-  voter: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "Voter",
-    required: true,
+const voteSchema = new Schema(
+  {
+    voter: {
+      type: Schema.Types.ObjectId,
+      ref: "Voter",
+      required: true,
+    },
+    election: {
+      type: Schema.Types.ObjectId,
+      ref: "Election",
+      required: true,
+    },
+    position: {
+      type: String,
+      required: true,
+    },
+    candidate: {
+      type: Schema.Types.ObjectId,
+      ref: "Candidate",
+      // Not required for abstention votes
+    },
+    timestamp: {
+      type: Date,
+      default: Date.now,
+    },
+    isAbstention: {
+      type: Boolean,
+      default: false,
+    },
   },
-  position: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "Position",
-    required: true,
-  },
-  candidate: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "Candidate",
-    required: true,
-  },
-  timestamp: {
-    type: Date,
-    default: Date.now,
-  },
-});
+  { timestamps: true }
+);
 
-// Prevent duplicate votes
-voteSchema.index({ voter: 1, position: 1 }, { unique: true });
+// Add an index to prevent duplicate votes for the same position by the same voter
+voteSchema.index({ voter: 1, election: 1, position: 1 }, { unique: true });
 
-const Vote = mongoose.model("Vote", voteSchema);
-
-export default Vote;
+export default mongoose.model("Vote", voteSchema);

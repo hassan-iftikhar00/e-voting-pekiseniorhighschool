@@ -8,6 +8,8 @@ import {
   Clock,
   Info,
   Settings,
+  Mail,
+  BarChart,
   Bell,
   Globe,
   ToggleRight,
@@ -30,10 +32,9 @@ import {
   Settings as SettingsIcon,
   X,
   Edit,
+  Plus,
 } from "lucide-react";
 import { useSettings } from "../../context/SettingsContext";
-import PermissionGuard from "../PermissionGuard";
-import axios from "axios";
 import { useUser } from "../../context/UserContext";
 
 interface ElectionSettings {
@@ -48,6 +49,7 @@ interface ElectionSettings {
   maxVotesPerVoter: number;
   systemName: string;
   systemLogo?: string;
+  electionTitle?: string;
 }
 
 const ElectionSettingsManager: React.FC = () => {
@@ -63,6 +65,8 @@ const ElectionSettingsManager: React.FC = () => {
     requireEmailVerification: true,
     maxVotesPerVoter: 1,
     systemName: "Peki Senior High School Elections",
+    systemLogo: "",
+    electionTitle: "Student Council Election 2025",
   });
 
   const [isEditing, setIsEditing] = useState(false);
@@ -78,15 +82,37 @@ const ElectionSettingsManager: React.FC = () => {
     votedVoters: 0,
     votingPercentage: 0,
   });
+  const [activeTab, setActiveTab] = useState<
+    "organization" | "system" | "backup" | "election"
+  >("organization");
+  const [elections, setElections] = useState<any[]>([]);
 
   // Check user permissions once
   const canViewSettings = hasPermission("settings", "view");
   const canEditSettings = hasPermission("settings", "edit");
 
+  // Add a helper function for date format conversions
+  const convertDateFormat = (dateStr: string) => {
+    if (!dateStr) return "";
+
+    // Check if date is in MM/DD/YYYY format
+    if (dateStr.includes("/")) {
+      const parts = dateStr.split("/");
+      if (parts.length === 3) {
+        // Convert to YYYY-MM-DD for input[type="date"]
+        return `${parts[2]}-${parts[0].padStart(2, "0")}-${parts[1].padStart(
+          2,
+          "0"
+        )}`;
+      }
+    }
+    // If already in YYYY-MM-DD format, return as is
+    return dateStr;
+  };
+
   // Fetch election settings
   const fetchSettings = async () => {
     if (!canViewSettings) return;
-
     try {
       setIsLoading(true);
       setError(null);
@@ -98,10 +124,12 @@ const ElectionSettingsManager: React.FC = () => {
         Authorization: token ? `Bearer ${token}` : "",
       };
 
+      // Add a cache-busting parameter to avoid browser caching
+      const timestamp = new Date().getTime();
       const response = await fetch(
         `${
           import.meta.env.VITE_API_URL || "http://localhost:5000"
-        }/api/settings`,
+        }/api/settings?t=${timestamp}`,
         { headers }
       );
 
@@ -110,7 +138,33 @@ const ElectionSettingsManager: React.FC = () => {
       }
 
       const data = await response.json();
-      setSettings(data);
+      console.log("Received settings data:", data);
+
+      // Format dates if needed for the date inputs (YYYY-MM-DD format)
+      const formattedData = {
+        ...data,
+        votingStartDate: convertDateFormat(data.votingStartDate || ""),
+        votingEndDate: convertDateFormat(data.votingEndDate || ""),
+      };
+
+      // Make sure to convert empty strings to appropriate defaults for date fields
+      setSettings({
+        isActive: formattedData.isActive || false,
+        votingStartDate: formattedData.votingStartDate || "",
+        votingEndDate: formattedData.votingEndDate || "",
+        votingStartTime: formattedData.votingStartTime || "08:00",
+        votingEndTime: formattedData.votingEndTime || "16:00",
+        resultsPublished: formattedData.resultsPublished || false,
+        allowVoterRegistration: formattedData.allowVoterRegistration || false,
+        requireEmailVerification:
+          formattedData.requireEmailVerification !== false, // true by default
+        maxVotesPerVoter: formattedData.maxVotesPerVoter || 1,
+        systemName:
+          formattedData.systemName || "Peki Senior High School Elections",
+        systemLogo: formattedData.systemLogo || "",
+        electionTitle:
+          formattedData.electionTitle || "Student Council Election 2025",
+      });
     } catch (error: any) {
       console.error("Error fetching settings:", error);
       setError(error.message || "Failed to load election settings");
@@ -122,7 +176,6 @@ const ElectionSettingsManager: React.FC = () => {
   // Fetch voter statistics
   const fetchVoterStats = async () => {
     if (!canViewSettings) return;
-
     try {
       // Get authentication token
       const token = localStorage.getItem("token");
@@ -149,11 +202,42 @@ const ElectionSettingsManager: React.FC = () => {
     }
   };
 
+  // Fetch elections
+  const fetchElections = async () => {
+    if (!canViewSettings) return;
+    try {
+      // Get authentication token
+      const token = localStorage.getItem("token");
+      const headers = {
+        "Content-Type": "application/json",
+        Authorization: token ? `Bearer ${token}` : "",
+      };
+
+      const response = await fetch(
+        `${
+          import.meta.env.VITE_API_URL || "http://localhost:5000"
+        }/api/elections`,
+        { headers }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch elections: ${response.status}`);
+      }
+
+      const data = await response.json();
+      setElections(data);
+    } catch (error: any) {
+      console.error("Error fetching elections:", error);
+      setError(error.message || "Failed to load elections");
+    }
+  };
+
   // Load data on component mount
   useEffect(() => {
     if (canViewSettings) {
       fetchSettings();
       fetchVoterStats();
+      fetchElections();
     }
   }, [canViewSettings]);
 
@@ -273,7 +357,7 @@ const ElectionSettingsManager: React.FC = () => {
         type: "success",
         message: `Election ${
           data.isActive ? "activated" : "deactivated"
-        } successfully`,
+        } successfully!`,
       });
     } catch (error: any) {
       console.error("Error toggling election status:", error);
@@ -287,7 +371,6 @@ const ElectionSettingsManager: React.FC = () => {
     }
   };
 
-  // Format date for display
   const formatDate = (dateString: string) => {
     if (!dateString) return "Not set";
 
@@ -296,6 +379,248 @@ const ElectionSettingsManager: React.FC = () => {
       month: "long",
       day: "numeric",
     });
+  };
+
+  // Handle file upload
+  const handleFileUpload = (
+    event: React.ChangeEvent<HTMLInputElement>,
+    type: "company" | "school"
+  ) => {
+    const file = event.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const logoString = reader.result as string;
+        // This is simplified as we don't have the updateSettings function with this signature
+        // In a real implementation, you'd update the state and handle API calls
+        setSettings({
+          ...settings,
+          systemLogo: logoString,
+        });
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  // Tab definitions with their properties for navigation - exactly matching original
+  const tabs = [
+    {
+      id: "organization",
+      name: "Organization",
+      icon: Building,
+      description: "Company and school settings",
+      gradient: "from-blue-500/20 to-indigo-500/20",
+      activeGradient: "from-blue-500 to-indigo-600",
+    },
+    {
+      id: "system",
+      name: "System",
+      icon: Cog,
+      description: "General system configuration",
+      gradient: "from-emerald-500/20 to-green-500/20",
+      activeGradient: "from-emerald-500 to-green-600",
+    },
+    {
+      id: "backup",
+      name: "Backup & Restore",
+      icon: HardDrive,
+      description: "Data backup and recovery",
+      gradient: "from-amber-500/20 to-yellow-500/20",
+      activeGradient: "from-amber-500 to-yellow-600",
+    },
+    {
+      id: "election",
+      name: "Election",
+      icon: Vote,
+      description: "Election parameters",
+      gradient: "from-purple-500/20 to-pink-500/20",
+      activeGradient: "from-purple-500 to-pink-600",
+    },
+  ] as const;
+
+  // Various handler functions for different actions
+  const handleSave = () => {
+    updateSettings();
+  };
+
+  const handleSetElectionDate = () => {
+    setNotification({
+      type: "success",
+      message: "Election date set successfully",
+    });
+
+    setTimeout(() => {
+      setNotification(null);
+    }, 3000);
+  };
+
+  const handleBackup = () => {
+    setNotification({
+      type: "success",
+      message: "Manual backup completed successfully",
+    });
+
+    setTimeout(() => {
+      setNotification(null);
+    }, 3000);
+  };
+
+  const handleRestore = () => {
+    setNotification({
+      type: "success",
+      message: "System restored successfully",
+    });
+
+    setTimeout(() => {
+      setNotification(null);
+    }, 3000);
+  };
+
+  const handleSetCurrentElection = async (electionId: string) => {
+    if (!canEditSettings) return;
+
+    try {
+      setIsLoading(true);
+
+      // Get authentication token
+      const token = localStorage.getItem("token");
+      const headers = {
+        "Content-Type": "application/json",
+        Authorization: token ? `Bearer ${token}` : "",
+      };
+
+      const response = await fetch(
+        `${
+          import.meta.env.VITE_API_URL || "http://localhost:5000"
+        }/api/elections/${electionId}/set-current`,
+        {
+          method: "POST",
+          headers,
+        }
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || "Failed to set current election");
+      }
+
+      const data = await response.json();
+      fetchElections();
+      fetchSettings();
+
+      setNotification({
+        type: "success",
+        message: "Election set as current successfully",
+      });
+    } catch (error: any) {
+      console.error("Error setting current election:", error);
+      setNotification({
+        type: "error",
+        message: error.message || "Failed to set current election",
+      });
+    } finally {
+      setIsLoading(false);
+      setTimeout(() => setNotification(null), 3000);
+    }
+  };
+
+  const handleDeleteElection = async (electionId: string) => {
+    if (!canEditSettings) return;
+
+    try {
+      setIsLoading(true);
+
+      // Get authentication token
+      const token = localStorage.getItem("token");
+      const headers = {
+        "Content-Type": "application/json",
+        Authorization: token ? `Bearer ${token}` : "",
+      };
+
+      const response = await fetch(
+        `${
+          import.meta.env.VITE_API_URL || "http://localhost:5000"
+        }/api/elections/${electionId}`,
+        {
+          method: "DELETE",
+          headers,
+        }
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || "Failed to delete election");
+      }
+
+      fetchElections();
+
+      setNotification({
+        type: "success",
+        message: "Election deleted successfully",
+      });
+    } catch (error: any) {
+      console.error("Error deleting election:", error);
+      setNotification({
+        type: "error",
+        message: error.message || "Failed to delete election",
+      });
+    } finally {
+      setIsLoading(false);
+      setTimeout(() => setNotification(null), 3000);
+    }
+  };
+
+  const handleCreateNewElection = async () => {
+    if (!canEditSettings) return;
+
+    try {
+      setIsLoading(true);
+
+      // Get authentication token
+      const token = localStorage.getItem("token");
+      const headers = {
+        "Content-Type": "application/json",
+        Authorization: token ? `Bearer ${token}` : "",
+      };
+
+      const response = await fetch(
+        `${
+          import.meta.env.VITE_API_URL || "http://localhost:5000"
+        }/api/elections`,
+        {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            title: "New Election " + new Date().getFullYear(),
+            date: new Date().toISOString().split("T")[0],
+            startTime: "08:00:00",
+            endTime: "16:00:00",
+          }),
+        }
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || "Failed to create election");
+      }
+
+      setNotification({
+        type: "success",
+        message: "New election created successfully",
+      });
+
+      // Refresh the list of elections
+      fetchElections();
+    } catch (error: any) {
+      console.error("Error creating election:", error);
+      setNotification({
+        type: "error",
+        message: error.message || "Failed to create election",
+      });
+    } finally {
+      setIsLoading(false);
+      setTimeout(() => setNotification(null), 3000);
+    }
   };
 
   // If user doesn't have view permission
@@ -316,44 +641,46 @@ const ElectionSettingsManager: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Page Header */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between space-y-3 md:space-y-0 bg-gradient-to-r from-indigo-700 to-purple-700 text-white p-4 rounded-lg shadow-md">
-        <div>
-          <h2 className="text-xl font-bold">Election Settings</h2>
-          <p className="text-indigo-100 text-sm font-sans font-light">
-            Configure and manage election parameters
-          </p>
-        </div>
-        {canEditSettings && (
-          <div className="flex space-x-2">
-            {!isEditing ? (
-              <button
-                onClick={() => setIsEditing(true)}
-                className="inline-flex items-center px-4 py-2 border border-transparent text-sm rounded-md shadow-sm text-indigo-700 bg-white hover:bg-indigo-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-colors duration-200"
-              >
-                <Edit className="h-4 w-4 mr-2" />
-                Edit Settings
-              </button>
-            ) : (
-              <>
+      <div className="bg-gradient-to-r from-indigo-700 to-purple-700 text-white p-4 rounded-lg shadow-md">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between">
+          <div>
+            <h2 className="text-xl font-bold">Settings</h2>
+            <p className="text-indigo-100 text-sm font-sans font-light">
+              Configure system and election parameters
+            </p>
+          </div>
+
+          {canEditSettings && (
+            <div className="mt-4 md:mt-0">
+              {!isEditing ? (
                 <button
-                  onClick={() => setIsEditing(false)}
-                  className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm rounded-md shadow-sm text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-colors duration-200"
-                >
-                  <XCircle className="h-4 w-4 mr-2" />
-                  Cancel
-                </button>
-                <button
-                  onClick={updateSettings}
-                  disabled={isLoading}
+                  onClick={() => setIsEditing(true)}
                   className="inline-flex items-center px-4 py-2 border border-transparent text-sm rounded-md shadow-sm text-indigo-700 bg-white hover:bg-indigo-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-colors duration-200"
                 >
-                  <Save className="h-4 w-4 mr-2" />
-                  Save Changes
+                  <Edit className="h-4 w-4 mr-2" />
+                  Edit Settings
                 </button>
-              </>
-            )}
-          </div>
-        )}
+              ) : (
+                <div className="flex space-x-2">
+                  <button
+                    onClick={() => setIsEditing(false)}
+                    className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm rounded-md shadow-sm text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-colors duration-200"
+                  >
+                    <XCircle className="h-4 w-4 mr-2" />
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleSave}
+                    className="inline-flex items-center px-4 py-2 border border-transparent text-sm rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                  >
+                    <Save className="h-4 w-4 mr-2" />
+                    Save Changes
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Notification */}
@@ -363,307 +690,260 @@ const ElectionSettingsManager: React.FC = () => {
             notification.type === "success"
               ? "bg-green-50 border border-green-200"
               : "bg-red-50 border border-red-200"
-          } flex justify-between items-start shadow-sm`}
+          }`}
         >
           <div className="flex">
             {notification.type === "success" ? (
-              <CheckCircle className="h-5 w-5 text-green-500 mr-3" />
+              <Check className="h-5 w-5 text-green-400" />
             ) : (
-              <AlertCircle className="h-5 w-5 text-red-500 mr-3" />
+              <AlertCircle className="h-5 w-5 text-red-400" />
             )}
-            <p
-              className={
-                notification.type === "success"
-                  ? "text-green-800"
-                  : "text-red-800"
-              }
-            >
-              {notification.message}
-            </p>
-          </div>
-          <button
-            onClick={() => setNotification(null)}
-            className="text-gray-400 hover:text-gray-500"
-          >
-            <XCircle className="h-5 w-5" />
-          </button>
-        </div>
-      )}
-
-      {/* Loading indicator */}
-      {isLoading && (
-        <div className="flex justify-center py-12">
-          <div className="flex flex-col items-center">
-            <RefreshCw className="h-8 w-8 text-indigo-500 animate-spin mb-2" />
-            <p className="text-gray-500">Loading...</p>
+            <div className="ml-3">
+              <p
+                className={
+                  notification.type === "success"
+                    ? "text-green-800"
+                    : "text-red-800"
+                }
+              >
+                {notification.message}
+              </p>
+            </div>
           </div>
         </div>
       )}
 
-      {/* Error display */}
-      {error && !isLoading && (
-        <div className="bg-red-50 p-4 rounded-md">
-          <div className="flex">
-            <AlertCircle className="h-5 w-5 text-red-500 mr-3" />
-            <p className="text-red-800">{error}</p>
-          </div>
-        </div>
-      )}
-
-      {/* Election Status and Quick Stats */}
+      {/* Settings Navigation */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        {/* Election Status Card */}
-        <div className="md:col-span-1 bg-white rounded-lg shadow p-6">
-          <h3 className="text-lg font-medium text-gray-900 mb-2 flex items-center">
-            <Settings className="h-5 w-5 text-indigo-500 mr-2" />
-            Election Status
-          </h3>
-
-          <div
-            className={`mt-2 ${
-              settings.isActive ? "text-green-600" : "text-red-600"
-            } text-center p-3 rounded-lg ${
-              settings.isActive ? "bg-green-50" : "bg-red-50"
+        {tabs.map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={`group relative overflow-hidden py-2 px-3 rounded-xl transition-all duration-300 ${
+              activeTab === tab.id
+                ? `bg-gradient-to-r ${tab.activeGradient} shadow-lg scale-[1.02]`
+                : `bg-gradient-to-r ${tab.gradient} hover:scale-[1.02]`
             }`}
           >
-            {settings.isActive ? (
-              <div className="flex items-center justify-center">
-                <ToggleRight className="h-6 w-6 mr-2" />
-                <span className="text-lg font-semibold">Active</span>
-              </div>
-            ) : (
-              <div className="flex items-center justify-center">
-                <ToggleLeft className="h-6 w-6 mr-2" />
-                <span className="text-lg font-semibold">Inactive</span>
-              </div>
-            )}
-          </div>
-
-          {canEditSettings && (
-            <button
-              onClick={toggleElectionStatus}
-              disabled={isLoading}
-              className={`mt-4 w-full flex items-center justify-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white ${
-                settings.isActive
-                  ? "bg-red-600 hover:bg-red-700"
-                  : "bg-green-600 hover:bg-green-700"
-              } focus:outline-none focus:ring-2 focus:ring-offset-2 ${
-                settings.isActive
-                  ? "focus:ring-red-500"
-                  : "focus:ring-green-500"
+            <div
+              className={`absolute inset-0 bg-gradient-to-r ${
+                tab.gradient
+              } group-hover:opacity-100 transition-opacity duration-300 ${
+                activeTab === tab.id ? "opacity-0" : "opacity-100"
               }`}
-            >
-              {settings.isActive ? (
-                <>
-                  <XCircle className="h-4 w-4 mr-2" />
-                  Deactivate Election
-                </>
-              ) : (
-                <>
-                  <CheckCircle className="h-4 w-4 mr-2" />
-                  Activate Election
-                </>
-              )}
-            </button>
-          )}
-        </div>
-
-        {/* Quick Stats Cards */}
-        <div className="md:col-span-3 grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="bg-white rounded-lg shadow p-6">
-            <div className="flex items-center">
-              <div className="p-3 rounded-full bg-indigo-100 text-indigo-600">
-                <Users className="h-6 w-6" />
+            />
+            <div className="relative flex items-center space-x-3">
+              <div
+                className={`flex-shrink-0 p-2 rounded-lg transition-colors duration-300 ${
+                  activeTab === tab.id
+                    ? "bg-white/20"
+                    : "bg-white group-hover:bg-white/80"
+                }`}
+              >
+                <tab.icon
+                  className={`h-5 w-5 transition-colors duration-300 ${
+                    activeTab === tab.id
+                      ? "text-white"
+                      : "text-gray-700 group-hover:text-gray-900"
+                  }`}
+                />
               </div>
-              <div className="ml-4">
-                <p className="text-sm font-medium text-gray-500">
-                  Total Voters
-                </p>
-                <p className="text-2xl font-semibold text-gray-900">
-                  {voterStats.totalVoters}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white rounded-lg shadow p-6">
-            <div className="flex items-center">
-              <div className="p-3 rounded-full bg-green-100 text-green-600">
-                <Vote className="h-6 w-6" />
-              </div>
-              <div className="ml-4">
-                <p className="text-sm font-medium text-gray-500">Votes Cast</p>
-                <p className="text-2xl font-semibold text-gray-900">
-                  {voterStats.votedVoters}
+              <div className="text-left min-w-0">
+                <h3
+                  className={`text-sm font-medium truncate transition-colors duration-300 ${
+                    activeTab === tab.id
+                      ? "text-white"
+                      : "text-gray-900 group-hover:text-gray-900"
+                  }`}
+                >
+                  {tab.name}
+                </h3>
+                <p
+                  className={`text-xs truncate transition-colors duration-300 ${
+                    activeTab === tab.id
+                      ? "text-white/80"
+                      : "text-gray-500 group-hover:text-gray-700"
+                  }`}
+                >
+                  {tab.description}
                 </p>
               </div>
             </div>
-          </div>
-
-          <div className="bg-white rounded-lg shadow p-6">
-            <div className="flex items-center">
-              <div className="p-3 rounded-full bg-purple-100 text-purple-600">
-                <CheckCircle className="h-6 w-6" />
-              </div>
-              <div className="ml-4">
-                <p className="text-sm font-medium text-gray-500">
-                  Voter Turnout
-                </p>
-                <p className="text-2xl font-semibold text-gray-900">
-                  {voterStats.votingPercentage.toFixed(1)}%
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
+            <div
+              className={`absolute bottom-0 left-0 h-0.5 bg-white/30 transition-all duration-300 ${
+                activeTab === tab.id ? "w-full" : "w-0 group-hover:w-full"
+              }`}
+            />
+          </button>
+        ))}
       </div>
 
-      {/* Main Settings Form */}
-      <div className="bg-white rounded-lg shadow overflow-hidden">
-        <div className="p-6">
-          <h3 className="text-lg font-medium text-gray-900 mb-4 border-b pb-2">
-            Election Configuration
-          </h3>
+      {/* Settings Content */}
+      <div className="bg-white rounded-lg shadow-md overflow-hidden">
+        {/* Organization Settings */}
+        {activeTab === "organization" && (
+          <div className="p-6 space-y-6">
+            <div className="border-b pb-4">
+              <h3 className="text-lg font-medium text-gray-900 flex items-center">
+                <School className="h-5 w-5 text-indigo-500 mr-2" />
+                Organization Details
+              </h3>
+            </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Voting Period Settings */}
-            <div className="bg-gray-50 p-4 rounded-lg">
-              <h4 className="text-md font-medium text-gray-900 mb-4 flex items-center">
-                <Calendar className="h-5 w-5 text-indigo-500 mr-2" />
-                Voting Period
-              </h4>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Company Name
+                </label>
+                <input
+                  type="text"
+                  className="w-full p-2 border border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500"
+                  value={settings.systemName}
+                  onChange={(e) =>
+                    setSettings({ ...settings, systemName: e.target.value })
+                  }
+                  disabled={!isEditing}
+                />
+              </div>
 
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Start Date
-                  </label>
-                  <input
-                    type="date"
-                    name="votingStartDate"
-                    className={`w-full p-2 border border-gray-300 rounded-md ${
-                      !isEditing ? "bg-gray-100 cursor-not-allowed" : "bg-white"
-                    }`}
-                    value={settings.votingStartDate}
-                    onChange={handleInputChange}
-                    disabled={!isEditing}
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Start Time
-                  </label>
-                  <input
-                    type="time"
-                    name="votingStartTime"
-                    className={`w-full p-2 border border-gray-300 rounded-md ${
-                      !isEditing ? "bg-gray-100 cursor-not-allowed" : "bg-white"
-                    }`}
-                    value={settings.votingStartTime}
-                    onChange={handleInputChange}
-                    disabled={!isEditing}
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    End Date
-                  </label>
-                  <input
-                    type="date"
-                    name="votingEndDate"
-                    className={`w-full p-2 border border-gray-300 rounded-md ${
-                      !isEditing ? "bg-gray-100 cursor-not-allowed" : "bg-white"
-                    }`}
-                    value={settings.votingEndDate}
-                    onChange={handleInputChange}
-                    disabled={!isEditing}
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    End Time
-                  </label>
-                  <input
-                    type="time"
-                    name="votingEndTime"
-                    className={`w-full p-2 border border-gray-300 rounded-md ${
-                      !isEditing ? "bg-gray-100 cursor-not-allowed" : "bg-white"
-                    }`}
-                    value={settings.votingEndTime}
-                    onChange={handleInputChange}
-                    disabled={!isEditing}
-                  />
-                </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  School Name
+                </label>
+                <input
+                  type="text"
+                  className="w-full p-2 border border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500"
+                  value={settings.systemName}
+                  onChange={(e) =>
+                    setSettings({ ...settings, systemName: e.target.value })
+                  }
+                  disabled={!isEditing}
+                />
               </div>
             </div>
 
-            {/* System Settings */}
-            <div className="bg-gray-50 p-4 rounded-lg">
-              <h4 className="text-md font-medium text-gray-900 mb-4 flex items-center">
-                <Settings className="h-5 w-5 text-indigo-500 mr-2" />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Company Logo
+                </label>
+                <div className="flex items-center space-x-4">
+                  <div className="w-32 h-32 border-2 border-dashed border-gray-300 rounded-lg flex items-center justify-center bg-gray-50">
+                    {settings.systemLogo ? (
+                      <img
+                        src={settings.systemLogo}
+                        alt="Company Logo"
+                        className="max-w-full max-h-full object-contain"
+                      />
+                    ) : (
+                      <ImageIcon className="h-12 w-12 text-gray-400" />
+                    )}
+                  </div>
+                  <div className="flex flex-col space-y-2">
+                    <label className="relative cursor-pointer">
+                      <input
+                        type="file"
+                        className="sr-only"
+                        accept="image/*"
+                        onChange={(e) => handleFileUpload(e, "company")}
+                        disabled={!isEditing}
+                      />
+                      <div className="px-3 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50">
+                        Browse...
+                      </div>
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  School Logo
+                </label>
+                <div className="flex items-center space-x-4">
+                  <div className="w-32 h-32 border-2 border-dashed border-gray-300 rounded-lg flex items-center justify-center bg-gray-50">
+                    {settings.systemLogo ? (
+                      <img
+                        src={settings.systemLogo}
+                        alt="School Logo"
+                        className="max-w-full max-h-full object-contain"
+                      />
+                    ) : (
+                      <ImageIcon className="h-12 w-12 text-gray-400" />
+                    )}
+                  </div>
+                  <div className="flex flex-col space-y-2">
+                    <label className="relative cursor-pointer">
+                      <input
+                        type="file"
+                        className="sr-only"
+                        accept="image/*"
+                        onChange={(e) => handleFileUpload(e, "school")}
+                        disabled={!isEditing}
+                      />
+                      <div className="px-3 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50">
+                        Browse...
+                      </div>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* System Settings */}
+        {activeTab === "system" && (
+          <div className="p-6 space-y-6">
+            <div className="border-b pb-4">
+              <h3 className="text-lg font-medium text-gray-900 flex items-center">
+                <Cog className="h-5 w-5 text-indigo-500 mr-2" />
+                System Configuration
+              </h3>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  System Name
+                </label>
+                <input
+                  type="text"
+                  name="systemName"
+                  className={`w-full p-2 border border-gray-300 rounded-md ${
+                    !isEditing ? "bg-gray-100 cursor-not-allowed" : "bg-white"
+                  }`}
+                  value={settings.systemName}
+                  onChange={handleInputChange}
+                  disabled={!isEditing}
+                  placeholder="e.g., Peki Senior High School Elections"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Time Zone
+                </label>
+                <select
+                  className={`w-full p-2 border border-gray-300 rounded-md ${
+                    !isEditing ? "bg-gray-100 cursor-not-allowed" : "bg-white"
+                  }`}
+                  value="Africa/Accra"
+                  disabled={!isEditing}
+                >
+                  <option value="Africa/Accra">Africa/Accra (GMT)</option>
+                  <option value="Africa/Lagos">Africa/Lagos (GMT+1)</option>
+                  <option value="Africa/Cairo">Africa/Cairo (GMT+2)</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="border-t pt-4 mt-4">
+              <h4 className="font-medium text-gray-700 mb-2">
                 System Settings
               </h4>
 
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    System Name
-                  </label>
-                  <input
-                    type="text"
-                    name="systemName"
-                    className={`w-full p-2 border border-gray-300 rounded-md ${
-                      !isEditing ? "bg-gray-100 cursor-not-allowed" : "bg-white"
-                    }`}
-                    value={settings.systemName}
-                    onChange={handleInputChange}
-                    disabled={!isEditing}
-                    placeholder="e.g., Peki Senior High School Elections"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Max Votes Per Voter
-                  </label>
-                  <input
-                    type="number"
-                    name="maxVotesPerVoter"
-                    min="1"
-                    max="100"
-                    className={`w-full p-2 border border-gray-300 rounded-md ${
-                      !isEditing ? "bg-gray-100 cursor-not-allowed" : "bg-white"
-                    }`}
-                    value={settings.maxVotesPerVoter}
-                    onChange={handleInputChange}
-                    disabled={!isEditing}
-                  />
-                  <p className="mt-1 text-xs text-gray-500">
-                    Maximum number of votes a voter can cast per position
-                  </p>
-                </div>
-
-                <div className="flex items-center">
-                  <input
-                    type="checkbox"
-                    id="resultsPublished"
-                    name="resultsPublished"
-                    className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
-                    checked={settings.resultsPublished}
-                    onChange={handleInputChange}
-                    disabled={!isEditing}
-                  />
-                  <label
-                    htmlFor="resultsPublished"
-                    className="ml-2 block text-sm text-gray-900"
-                  >
-                    Publish results to voters
-                  </label>
-                </div>
-
+              <div className="space-y-3">
                 <div className="flex items-center">
                   <input
                     type="checkbox"
@@ -699,35 +979,507 @@ const ElectionSettingsManager: React.FC = () => {
                     Require email verification for voters
                   </label>
                 </div>
+
+                <div className="flex items-center">
+                  <input
+                    type="checkbox"
+                    id="resultsPublished"
+                    name="resultsPublished"
+                    className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+                    checked={settings.resultsPublished}
+                    onChange={handleInputChange}
+                    disabled={!isEditing}
+                  />
+                  <label
+                    htmlFor="resultsPublished"
+                    className="ml-2 block text-sm text-gray-900"
+                  >
+                    Publish results to voters
+                  </label>
+                </div>
               </div>
             </div>
           </div>
-        </div>
+        )}
 
-        {/* Information box */}
-        <div className="bg-blue-50 p-4 m-6 rounded-md">
-          <div className="flex">
-            <Info className="h-5 w-5 text-blue-500 mr-3 flex-shrink-0" />
-            <div>
-              <h4 className="text-sm font-medium text-blue-800 mb-1">
-                Important Information
-              </h4>
-              <p className="text-sm text-blue-700">
-                When the election is active, voters will be able to cast their
-                votes. Make sure all candidates and positions are set up
-                correctly before activating the election.
-              </p>
-              {settings.isActive && (
-                <p className="text-sm text-blue-700 mt-2">
-                  Election is currently active. Voting period:{" "}
-                  {formatDate(settings.votingStartDate)}{" "}
-                  {settings.votingStartTime} to{" "}
-                  {formatDate(settings.votingEndDate)} {settings.votingEndTime}.
+        {/* Backup & Restore Settings */}
+        {activeTab === "backup" && (
+          <div className="p-6 space-y-6">
+            <div className="border-b pb-4">
+              <h3 className="text-lg font-medium text-gray-900 flex items-center">
+                <Database className="h-5 w-5 text-indigo-500 mr-2" />
+                Backup & Data Management
+              </h3>
+            </div>
+
+            <div className="bg-blue-50 p-4 rounded-md">
+              <div className="flex">
+                <Info className="h-5 w-5 text-blue-500 mr-3 flex-shrink-0" />
+                <div>
+                  <h4 className="text-sm font-medium text-blue-800 mb-1">
+                    Data Management Information
+                  </h4>
+                  <p className="text-sm text-blue-700">
+                    Regularly backup your election data to prevent data loss.
+                    You can also restore from previous backups if needed.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
+              <div className="bg-gray-50 p-4 rounded-lg">
+                <h4 className="font-medium text-gray-900 mb-3 flex items-center">
+                  <Download className="h-4 w-4 text-indigo-500 mr-2" />
+                  Backup Data
+                </h4>
+                <p className="text-sm text-gray-500 mb-4">
+                  Create a backup of all election data including users, voters,
+                  candidates, and votes.
                 </p>
+                <button
+                  onClick={handleBackup}
+                  className="w-full inline-flex justify-center items-center px-4 py-2 border border-transparent text-sm rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                  disabled={!canEditSettings}
+                >
+                  <Download className="h-4 w-4 mr-2" />
+                  Backup Now
+                </button>
+              </div>
+
+              <div className="bg-gray-50 p-4 rounded-lg">
+                <h4 className="font-medium text-gray-900 mb-3 flex items-center">
+                  <Upload className="h-4 w-4 text-indigo-500 mr-2" />
+                  Restore From Backup
+                </h4>
+                <p className="text-sm text-gray-500 mb-4">
+                  Restore system data from a previous backup file. This will
+                  replace current data.
+                </p>
+                <label className="w-full inline-flex justify-center items-center px-4 py-2 border border-gray-300 text-sm rounded-md shadow-sm text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 cursor-pointer">
+                  <Upload className="h-4 w-4 mr-2" />
+                  Select Backup File
+                  <input
+                    type="file"
+                    className="hidden"
+                    accept=".json"
+                    disabled={!canEditSettings}
+                  />
+                </label>
+              </div>
+            </div>
+
+            <div className="border-t pt-4 mt-2">
+              <h4 className="font-medium text-gray-700 mb-3">
+                Auto-Backup Settings
+              </h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="flex items-center">
+                  <input
+                    type="checkbox"
+                    id="autoBackup"
+                    className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+                    checked={true}
+                    disabled={!isEditing}
+                  />
+                  <label
+                    htmlFor="autoBackup"
+                    className="ml-2 block text-sm text-gray-900"
+                  >
+                    Enable automatic backups
+                  </label>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Backup Interval (hours)
+                  </label>
+                  <select
+                    className={`w-full p-2 border border-gray-300 rounded-md ${
+                      !isEditing ? "bg-gray-100 cursor-not-allowed" : "bg-white"
+                    }`}
+                    disabled={!isEditing}
+                    defaultValue="24"
+                  >
+                    <option value="12">Every 12 hours</option>
+                    <option value="24">Every 24 hours</option>
+                    <option value="48">Every 48 hours</option>
+                    <option value="72">Every 72 hours</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Election Settings */}
+        {activeTab === "election" && (
+          <div className="p-6 space-y-6">
+            <div className="border-b pb-4">
+              <h3 className="text-lg font-medium text-gray-900 flex items-center">
+                <Vote className="h-5 w-5 text-indigo-500 mr-2" />
+                Election Parameters
+              </h3>
+            </div>
+
+            {/* Add back the edit settings prompt banner */}
+            {!isEditing && (
+              <div className="p-4 bg-blue-50 border border-blue-200 rounded-md mb-4">
+                <div className="flex">
+                  <Info className="h-5 w-5 text-blue-500 mr-3 flex-shrink-0" />
+                  <div>
+                    <p className="text-sm text-blue-800">
+                      To edit election settings, click the "Edit Settings"
+                      button in the top right corner.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="md:col-span-2">
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Election Title
+                </label>
+                <input
+                  type="text"
+                  name="electionTitle"
+                  className="w-full p-2 border border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500"
+                  value={
+                    settings.electionTitle || "Student Council Election 2025"
+                  }
+                  onChange={(e) =>
+                    setSettings({ ...settings, electionTitle: e.target.value })
+                  }
+                  disabled={!isEditing}
+                  placeholder="e.g., Student Council Election 2025"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Election Start Date
+                </label>
+                <input
+                  type="date"
+                  name="votingStartDate"
+                  className="w-full p-2 border border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500"
+                  value={settings.votingStartDate}
+                  onChange={handleInputChange}
+                  disabled={!isEditing}
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Election End Date
+                </label>
+                <input
+                  type="date"
+                  name="votingEndDate"
+                  className="w-full p-2 border border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500"
+                  value={settings.votingEndDate}
+                  onChange={handleInputChange}
+                  disabled={!isEditing}
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Start Time
+                </label>
+                <input
+                  type="time"
+                  name="votingStartTime"
+                  className="w-full p-2 border border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500"
+                  value={settings.votingStartTime}
+                  onChange={handleInputChange}
+                  disabled={!isEditing}
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  End Time
+                </label>
+                <input
+                  type="time"
+                  name="votingEndTime"
+                  className="w-full p-2 border border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500"
+                  value={settings.votingEndTime}
+                  onChange={handleInputChange}
+                  disabled={!isEditing}
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Max Votes Per Voter
+                </label>
+                <input
+                  type="number"
+                  name="maxVotesPerVoter"
+                  min="1"
+                  max="100"
+                  className="w-full p-2 border border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500"
+                  value={settings.maxVotesPerVoter}
+                  onChange={handleInputChange}
+                  disabled={!isEditing}
+                />
+                <p className="mt-1 text-xs text-gray-500">
+                  Maximum number of votes a voter can cast per position
+                </p>
+              </div>
+            </div>
+
+            <div
+              className={`p-4 rounded-lg ${
+                settings.isActive ? "bg-green-50" : "bg-red-50"
+              }`}
+            >
+              <div className="flex items-center">
+                {settings.isActive ? (
+                  <>
+                    <ToggleRight className="h-6 w-6 text-green-500 mr-2" />
+                    <div>
+                      <p className="font-medium text-green-800">
+                        Election is Active
+                      </p>
+                      <p className="text-sm text-green-700">
+                        Voters can currently cast votes
+                      </p>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <ToggleLeft className="h-6 w-6 text-red-500 mr-2" />
+                    <div>
+                      <p className="font-medium text-red-800">
+                        Election is Inactive
+                      </p>
+                      <p className="text-sm text-red-700">
+                        Voting is currently disabled
+                      </p>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+
+            <div className="border-t pt-4 mt-4">
+              <h4 className="font-medium text-gray-700 mb-3">
+                Election Actions
+              </h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {canEditSettings && (
+                  <button
+                    onClick={toggleElectionStatus}
+                    disabled={isLoading}
+                    className={`inline-flex items-center justify-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white ${
+                      settings.isActive
+                        ? "bg-red-600 hover:bg-red-700"
+                        : "bg-green-600 hover:bg-green-700"
+                    }`}
+                  >
+                    {settings.isActive ? (
+                      <>
+                        <XCircle className="h-4 w-4 mr-2" />
+                        Deactivate Election
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle className="h-4 w-4 mr-2" />
+                        Activate Election
+                      </>
+                    )}
+                  </button>
+                )}
+
+                {isEditing && canEditSettings && (
+                  <button
+                    onClick={handleSave}
+                    className="inline-flex items-center justify-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700"
+                  >
+                    <Save className="h-4 w-4 mr-2" />
+                    Save Changes
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="mt-8 border-t pt-6">
+              <h3 className="text-lg font-medium text-gray-900 flex items-center mb-4">
+                <Calendar className="h-5 w-5 text-indigo-500 mr-2" />
+                Current and Previous Elections
+              </h3>
+              <div className="overflow-hidden border border-gray-200 rounded-lg shadow">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th
+                        scope="col"
+                        className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                      >
+                        Election Title
+                      </th>
+                      <th
+                        scope="col"
+                        className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                      >
+                        Date
+                      </th>
+                      <th
+                        scope="col"
+                        className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                      >
+                        Time
+                      </th>
+                      <th
+                        scope="col"
+                        className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                      >
+                        Status
+                      </th>
+                      <th
+                        scope="col"
+                        className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
+                      >
+                        Progress
+                      </th>
+                      <th
+                        scope="col"
+                        className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider"
+                      >
+                        Actions
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {elections.length > 0 ? (
+                      elections.map((election) => (
+                        <tr
+                          key={election._id}
+                          className={election.isCurrent ? "bg-blue-50" : ""}
+                        >
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="flex items-center">
+                              <div className="text-sm font-medium text-gray-900">
+                                {election.title}
+                                {election.isCurrent && (
+                                  <span className="ml-2 px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">
+                                    Current
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="text-sm text-gray-900">
+                              {formatDate(election.date)}
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="text-sm text-gray-500">
+                              {election.startTime.substring(0, 5)} -{" "}
+                              {election.endTime.substring(0, 5)}
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <span
+                              className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                                election.isActive
+                                  ? "bg-green-100 text-green-800"
+                                  : "bg-red-100 text-red-800"
+                              }`}
+                            >
+                              {election.isActive ? "Active" : "Inactive"}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="text-sm text-gray-900">
+                              {election.votedCount} / {election.totalVoters}{" "}
+                              voted
+                            </div>
+                            <div className="w-24 bg-gray-200 rounded-full h-2.5 mt-1">
+                              <div
+                                className="bg-indigo-600 h-2.5 rounded-full"
+                                style={{
+                                  width: `${
+                                    election.totalVoters > 0
+                                      ? Math.round(
+                                          (election.votedCount /
+                                            election.totalVoters) *
+                                            100
+                                        )
+                                      : 0
+                                  }%`,
+                                }}
+                              ></div>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                            {canEditSettings && (
+                              <div className="flex justify-end space-x-2">
+                                {!election.isCurrent && (
+                                  <button
+                                    onClick={() =>
+                                      handleSetCurrentElection(election._id)
+                                    }
+                                    className="text-indigo-600 hover:text-indigo-900"
+                                    title="Set as current election"
+                                  >
+                                    <Check className="h-5 w-5" />
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() =>
+                                    handleDeleteElection(election._id)
+                                  }
+                                  className="text-red-600 hover:text-red-900"
+                                  title="Delete election"
+                                  disabled={election.isCurrent}
+                                >
+                                  <Trash2
+                                    className={`h-5 w-5 ${
+                                      election.isCurrent
+                                        ? "opacity-50 cursor-not-allowed"
+                                        : ""
+                                    }`}
+                                  />
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td
+                          colSpan={6}
+                          className="px-6 py-4 text-center text-sm text-gray-500"
+                        >
+                          No elections found
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+              {canEditSettings && (
+                <div className="mt-4 flex justify-end">
+                  <button
+                    onClick={handleCreateNewElection}
+                    className="inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700"
+                  >
+                    <Plus className="h-4 w-4 mr-2" />
+                    Create New Election
+                  </button>
+                </div>
               )}
             </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );

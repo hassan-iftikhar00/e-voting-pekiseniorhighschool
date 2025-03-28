@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect } from "react";
 import {
   Search,
   X,
@@ -7,17 +7,11 @@ import {
   RefreshCw,
   FileSpreadsheet,
   Printer,
-  Columns,
-  Info,
-  ArrowUp,
-  ArrowDown,
-  ChevronDown,
-  ChevronUp,
+  BarChart2,
   Eye,
   EyeOff,
   BarChart3,
   PieChart,
-  Award,
 } from "lucide-react";
 import { useUser } from "../../context/UserContext";
 
@@ -78,15 +72,12 @@ const Results: React.FC = () => {
   });
   const [searchTerm, setSearchTerm] = useState("");
   const [filterPosition, setFilterPosition] = useState<string>("");
-  const [sortBy, setSortBy] = useState<"position" | "votes">("position");
-  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notification, setNotification] = useState<{
     type: "success" | "error";
     message: string;
   } | null>(null);
-  const [selectedPosition, setSelectedPosition] = useState<string | null>(null);
   const [positions, setPositions] = useState<Position[]>([]);
   const [chartType, setChartType] = useState<"bar" | "pie">("bar");
   const [electionStatus, setElectionStatus] = useState<{
@@ -119,6 +110,17 @@ const Results: React.FC = () => {
       );
 
       if (!response.ok) {
+        if (response.status === 404) {
+          // Set empty default data for development until API is ready
+          setResults([]);
+          setVoterStats({
+            total: 0,
+            voted: 0,
+            notVoted: 0,
+            percentage: 0,
+          });
+          return;
+        }
         throw new Error(`Failed to fetch results: ${response.status}`);
       }
 
@@ -179,6 +181,11 @@ const Results: React.FC = () => {
       );
 
       if (!response.ok) {
+        if (response.status === 404) {
+          // Set default status until API is ready
+          setElectionStatus({ isActive: false, resultsPublished: false });
+          return;
+        }
         throw new Error(`Failed to fetch election status: ${response.status}`);
       }
 
@@ -186,6 +193,8 @@ const Results: React.FC = () => {
       setElectionStatus(data);
     } catch (error: any) {
       console.error("Error fetching election status:", error);
+      // Don't show error for this, just use defaults
+      setElectionStatus({ isActive: false, resultsPublished: false });
     }
   };
 
@@ -253,41 +262,18 @@ const Results: React.FC = () => {
     }
   }, [canViewResults]);
 
-  // Sort and filter results
-  const filteredResults = results
-    .filter(
-      (result) =>
-        (filterPosition === "" || result.position._id === filterPosition) &&
-        (searchTerm === "" ||
-          result.position.title
-            .toLowerCase()
-            .includes(searchTerm.toLowerCase()) ||
-          result.candidates.some((c) =>
-            c.candidate.name.toLowerCase().includes(searchTerm.toLowerCase())
-          ))
-    )
-    .sort((a, b) => {
-      if (sortBy === "position") {
-        return sortDirection === "asc"
-          ? a.position.priority - b.position.priority
-          : b.position.priority - a.position.priority;
-      } else if (sortBy === "votes") {
-        return sortDirection === "asc"
-          ? a.totalVotes - b.totalVotes
-          : b.totalVotes - a.totalVotes;
-      }
-      return 0;
-    });
-
-  // Handle sorting change
-  const handleSort = (field: "position" | "votes") => {
-    if (sortBy === field) {
-      setSortDirection(sortDirection === "asc" ? "desc" : "asc");
-    } else {
-      setSortBy(field);
-      setSortDirection("asc");
-    }
-  };
+  // Filter results based on search term and position filter
+  const filteredResults = results.filter(
+    (result) =>
+      (filterPosition === "" || result.position._id === filterPosition) &&
+      (searchTerm === "" ||
+        result.position.title
+          .toLowerCase()
+          .includes(searchTerm.toLowerCase()) ||
+        result.candidates.some((c) =>
+          c.candidate.name.toLowerCase().includes(searchTerm.toLowerCase())
+        ))
+  );
 
   // Print results
   const handlePrint = () => {
@@ -300,20 +286,71 @@ const Results: React.FC = () => {
     const styles = `
       <style>
         body { font-family: Arial, sans-serif; margin: 0; padding: 20px; }
-        h1, h2 { text-align: center; color: #4338ca; }
-        h1 { margin-bottom: 5px; }
-        h2 { margin-top: 0; margin-bottom: 20px; font-size: 18px; color: #666; }
-        .stats { text-align: center; margin-bottom: 20px; padding: 10px; background-color: #f8f9fa; border-radius: 8px; }
-        .stats p { margin: 5px 0; }
-        .position { margin-bottom: 30px; }
-        .position-header { background-color: #f3f4f6; padding: 10px; border-radius: 6px; margin-bottom: 10px; }
-        .candidates { width: 100%; border-collapse: collapse; margin-bottom: 15px; }
-        .candidates th, .candidates td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #e5e7eb; }
-        .candidates th { background-color: #f9fafb; color: #374151; font-weight: bold; }
-        .progress-bar { background-color: #eee; height: 20px; border-radius: 10px; overflow: hidden; }
-        .progress { height: 100%; background-color: #4f46e5; }
-        .winner { font-weight: bold; color: #047857; }
-        .footer { margin-top: 30px; text-align: center; font-size: 12px; color: #6b7280; }
+        h1 { text-align: center; color: #4338ca; margin-bottom: 20px; }
+        .position-card { 
+          background: #fff;
+          border: 1px solid #e5e7eb;
+          border-radius: 8px;
+          margin-bottom: 20px;
+          padding: 16px;
+          page-break-inside: avoid;
+        }
+        .position-title {
+          font-size: 18px;
+          font-weight: bold;
+          color: #1f2937;
+          margin-bottom: 12px;
+        }
+        .candidate {
+          display: flex;
+          align-items: center;
+          margin-bottom: 12px;
+          padding: 8px;
+          background: #f9fafb;
+          border-radius: 6px;
+        }
+        .candidate-image {
+          width: 48px;
+          height: 48px;
+          border-radius: 50%;
+          margin-right: 12px;
+          object-fit: cover;
+        }
+        .candidate-info {
+          flex-grow: 1;
+        }
+        .candidate-name {
+          font-weight: 600;
+          color: #111827;
+        }
+        .candidate-votes {
+          color: #6b7280;
+          font-size: 14px;
+        }
+        .progress-bar {
+          height: 8px;
+          background: #e5e7eb;
+          border-radius: 4px;
+          margin-top: 8px;
+        }
+        .progress-fill {
+          height: 100%;
+          border-radius: 4px;
+        }
+        .total-votes {
+          text-align: right;
+          color: #6b7280;
+          font-size: 14px;
+          margin-top: 8px;
+        }
+        .footer {
+          margin-top: 40px;
+          text-align: center;
+          font-size: 12px;
+          color: #6b7280;
+          border-top: 1px solid #e5e7eb;
+          padding-top: 20px;
+        }
       </style>
     `;
 
@@ -321,67 +358,71 @@ const Results: React.FC = () => {
       <!DOCTYPE html>
       <html>
         <head>
-          <title>Election Results - Peki Senior High School</title>
+          <title>Student Council Election ${new Date().getFullYear()} - Results</title>
           ${styles}
         </head>
         <body>
           <h1>Peki Senior High School - Election Results</h1>
-          <h2>Prefectorial Elections ${new Date().getFullYear()}</h2>
-          
-          <div class="stats">
-            <p><strong>Total Voters:</strong> ${voterStats.total}</p>
-            <p><strong>Voters Who Voted:</strong> ${
-              voterStats.voted
-            } (${voterStats.percentage.toFixed(1)}%)</p>
-            <p><strong>Voters Who Haven't Voted:</strong> ${
-              voterStats.notVoted
-            }</p>
-          </div>
+          <h1>Student Council Election ${new Date().getFullYear()}</h1>
           
           ${filteredResults
             .map(
               (result) => `
-            <div class="position">
-              <h3 class="position-header">${result.position.title}</h3>
-              <table class="candidates">
-                <thead>
-                  <tr>
-                    <th width="40%">Candidate</th>
-                    <th width="15%">Votes</th>
-                    <th width="35%">Percentage</th>
-                    <th width="10%">Results</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${result.candidates
-                    .sort((a, b) => b.voteCount - a.voteCount)
-                    .map(
-                      (candidate, index) => `
-                    <tr class="${index === 0 ? "winner" : ""}">
-                      <td>${candidate.candidate.name}</td>
-                      <td>${candidate.voteCount}</td>
-                      <td>
-                        <div class="progress-bar">
-                          <div class="progress" style="width: ${
-                            candidate.percentage
-                          }%"></div>
-                        </div>
-                      </td>
-                      <td>${candidate.percentage.toFixed(1)}%</td>
-                    </tr>
-                  `
-                    )
-                    .join("")}
-                </tbody>
-              </table>
-              <p><strong>Total Votes Cast:</strong> ${result.totalVotes}</p>
+            <div class="position-card">
+              <div class="position-title">${result.position.title}</div>
+              ${result.candidates
+                .sort((a, b) => b.voteCount - a.voteCount)
+                .map((candidateResult, index) => {
+                  const candidate = candidateResult.candidate;
+                  return `
+                  <div class="candidate">
+                    <div class="candidate-image" style="
+                      background-color: #ddd; 
+                      display: flex; 
+                      align-items: center; 
+                      justify-content: center; 
+                      font-size: 20px; 
+                      font-weight: bold;
+                      color: #4338ca;
+                    ">
+                      ${
+                        candidate.image
+                          ? `<img src="${candidate.image}" alt="${candidate.name}" class="candidate-image">`
+                          : candidate.name.charAt(0)
+                      }
+                    </div>
+                    <div class="candidate-info">
+                      <div class="candidate-name">${candidate.name}</div>
+                      <div class="candidate-votes">${
+                        candidateResult.voteCount
+                      } votes (${candidateResult.percentage.toFixed(1)}%)</div>
+                      <div class="progress-bar">
+                        <div 
+                          class="progress-fill" 
+                          style="width: ${
+                            candidateResult.percentage
+                          }%; background-color: ${
+                    index === 0
+                      ? "#059669"
+                      : index === 1
+                      ? "#0284c7"
+                      : "#6366f1"
+                  };"
+                        ></div>
+                      </div>
+                    </div>
+                  </div>
+                  `;
+                })
+                .join("")}
+              <div class="total-votes">Total Votes: ${result.totalVotes}</div>
             </div>
           `
             )
             .join("")}
           
           <div class="footer">
-            <p>Printed on ${new Date().toLocaleString()}</p>
+            <p>Generated on ${new Date().toLocaleString()}</p>
             <p>Peki Senior High School - Prefectorial Elections ${new Date().getFullYear()}</p>
           </div>
         </body>
@@ -394,19 +435,20 @@ const Results: React.FC = () => {
 
   // Export results to Excel (CSV)
   const handleExportExcel = () => {
-    // Create CSV content
     let csvContent = "Position,Candidate,Votes,Percentage\n";
 
     filteredResults.forEach((result) => {
       result.candidates
         .sort((a, b) => b.voteCount - a.voteCount)
-        .forEach((candidate) => {
+        .forEach((candidateResult) => {
           csvContent += `"${result.position.title}","${
-            candidate.candidate.name
-          }",${candidate.voteCount},${candidate.percentage.toFixed(1)}%\n`;
+            candidateResult.candidate.name
+          }",${candidateResult.voteCount},${candidateResult.percentage.toFixed(
+            1
+          )}%\n`;
         });
       // Add an empty line after each position
-      csvContent += "\n";
+      csvContent += `"${result.position.title} Total",,${result.totalVotes},100%\n\n`;
     });
 
     // Create a blob and download link
@@ -470,7 +512,7 @@ const Results: React.FC = () => {
         <div>
           <h2 className="text-xl font-bold">Election Results</h2>
           <p className="text-indigo-100 text-sm font-sans font-light">
-            View and analyze the election results
+            View and analyze voting results
           </p>
         </div>
         <div className="flex space-x-2">
@@ -493,6 +535,20 @@ const Results: React.FC = () => {
               )}
             </button>
           )}
+          <button
+            onClick={handleExportExcel}
+            className="inline-flex items-center px-4 py-2 border border-transparent text-sm rounded-md shadow-sm text-indigo-700 bg-white hover:bg-indigo-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-colors duration-200"
+          >
+            <FileSpreadsheet className="h-4 w-4 mr-2" />
+            Export
+          </button>
+          <button
+            onClick={handlePrint}
+            className="inline-flex items-center px-4 py-2 border border-transparent text-sm rounded-md shadow-sm text-indigo-700 bg-white hover:bg-indigo-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-colors duration-200"
+          >
+            <Printer className="h-4 w-4 mr-2" />
+            Print
+          </button>
         </div>
       </div>
 
@@ -530,6 +586,44 @@ const Results: React.FC = () => {
         </div>
       )}
 
+      {/* Filters and Controls */}
+      <div className="bg-white p-4 rounded-lg shadow-md">
+        <div className="flex flex-col md:flex-row md:items-center space-y-3 md:space-y-0">
+          {/* Search */}
+          <div className="flex-1">
+            <div className="relative">
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                <Search className="h-5 w-5 text-gray-400" />
+              </div>
+              <input
+                type="text"
+                className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
+                placeholder="Search positions or candidates..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
+            </div>
+          </div>
+          {/* Position filter (optional) */}
+          {positions.length > 0 && (
+            <div className="md:ml-4">
+              <select
+                className="p-2 border border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500"
+                value={filterPosition}
+                onChange={(e) => setFilterPosition(e.target.value)}
+              >
+                <option value="">All Positions</option>
+                {positions.map((position) => (
+                  <option key={position._id} value={position._id}>
+                    {position.title}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* Stats Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="bg-white rounded-lg shadow p-4 flex flex-col items-center text-center">
@@ -554,237 +648,108 @@ const Results: React.FC = () => {
         </div>
       </div>
 
-      {/* Filters and Actions */}
-      <div className="bg-white p-4 rounded-lg shadow-md">
-        <div className="flex flex-col md:flex-row md:items-center space-y-3 md:space-y-0">
-          {/* Left side - Filter select */}
-          <div className="flex items-center space-x-2">
-            <select
-              className="p-2 border border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500"
-              value={filterPosition}
-              onChange={(e) => setFilterPosition(e.target.value)}
-            >
-              <option value="">All Positions</option>
-              {positions.map((position) => (
-                <option key={position._id} value={position._id}>
-                  {position.title}
-                </option>
-              ))}
-            </select>
-
-            <div className="flex space-x-1 border border-gray-300 rounded-md p-1">
-              <button
-                onClick={() => setChartType("bar")}
-                className={`p-1 rounded ${
-                  chartType === "bar"
-                    ? "bg-indigo-100 text-indigo-700"
-                    : "text-gray-500 hover:bg-gray-100"
-                }`}
-                title="Bar Chart"
-              >
-                <BarChart3 className="h-5 w-5" />
-              </button>
-              <button
-                onClick={() => setChartType("pie")}
-                className={`p-1 rounded ${
-                  chartType === "pie"
-                    ? "bg-indigo-100 text-indigo-700"
-                    : "text-gray-500 hover:bg-gray-100"
-                }`}
-                title="Pie Chart"
-              >
-                <PieChart className="h-5 w-5" />
-              </button>
-            </div>
-          </div>
-
-          {/* Right side - Action buttons */}
-          <div className="flex space-x-2 md:ml-auto">
-            <button
-              onClick={handlePrint}
-              className="inline-flex items-center px-3 py-1.5 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-              title="Print results"
-            >
-              <Printer className="h-4 w-4 mr-1.5" />
-              Print
-            </button>
-            <button
-              onClick={handleExportExcel}
-              className="inline-flex items-center px-3 py-1.5 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
-              title="Export to Excel"
-            >
-              <FileSpreadsheet className="h-4 w-4 mr-1.5" />
-              Export
-            </button>
-          </div>
-        </div>
-
-        {/* Search */}
-        <div className="mt-4">
-          <div className="relative">
-            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-              <Search className="h-5 w-5 text-gray-400" />
-            </div>
-            <input
-              type="text"
-              className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
-              placeholder="Search by position or candidate name..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
-          </div>
-        </div>
-      </div>
-
-      {/* Empty state */}
-      {filteredResults.length === 0 && (
-        <div className="bg-white rounded-lg p-8 text-center">
-          <Award className="h-12 w-12 text-indigo-300 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">
-            No results found
-          </h3>
-          <p className="text-gray-500 mb-6">
-            {results.length === 0
-              ? "No votes have been cast yet."
-              : "No results match your search criteria."}
-          </p>
-        </div>
-      )}
-
-      {/* Results Display */}
-      <div className="space-y-6">
+      {/* Results Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {filteredResults.map((result) => (
           <div
             key={result.position._id}
             className="bg-white rounded-lg shadow-md overflow-hidden"
           >
-            <div
-              className="bg-indigo-50 p-4 flex justify-between items-center cursor-pointer"
-              onClick={() =>
-                setSelectedPosition(
-                  selectedPosition === result.position._id
-                    ? null
-                    : result.position._id
-                )
-              }
-            >
-              <h3 className="text-lg font-semibold text-indigo-900 flex items-center">
-                <Award className="h-5 w-5 mr-2 text-indigo-500" />
+            <div className="p-4 bg-gradient-to-r from-indigo-50 to-purple-50 border-b">
+              <h3 className="text-lg font-semibold text-gray-900">
                 {result.position.title}
               </h3>
-              <div className="flex items-center">
-                <span className="mr-2 text-sm text-indigo-700">
-                  {result.totalVotes} votes
-                </span>
-                {selectedPosition === result.position._id ? (
-                  <ChevronUp className="h-5 w-5 text-indigo-500" />
-                ) : (
-                  <ChevronDown className="h-5 w-5 text-indigo-500" />
-                )}
-              </div>
+              <p className="text-sm text-gray-500">
+                Total Votes: {result.totalVotes}
+              </p>
             </div>
 
-            {selectedPosition === result.position._id && (
-              <div className="p-4">
-                <div className="overflow-x-auto">
-                  <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th
-                          scope="col"
-                          className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-                        >
-                          Rank
-                        </th>
-                        <th
-                          scope="col"
-                          className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-                        >
-                          Candidate
-                        </th>
-                        <th
-                          scope="col"
-                          className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-                        >
-                          Votes
-                        </th>
-                        <th
-                          scope="col"
-                          className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-1/3"
-                        >
-                          Percentage
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="bg-white divide-y divide-gray-200">
-                      {result.candidates
-                        .sort((a, b) => b.voteCount - a.voteCount)
-                        .map((candidate, index) => (
-                          <tr
-                            key={candidate.candidate._id}
-                            className={index === 0 ? "bg-green-50" : ""}
-                          >
-                            <td className="px-3 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                              {index + 1}
-                            </td>
-                            <td className="px-3 py-4 whitespace-nowrap">
-                              <div className="flex items-center">
-                                {candidate.candidate.image ? (
-                                  <img
-                                    src={candidate.candidate.image}
-                                    alt={candidate.candidate.name}
-                                    className="h-8 w-8 rounded-full mr-3 object-cover"
-                                  />
-                                ) : (
-                                  <div className="h-8 w-8 rounded-full bg-indigo-100 flex items-center justify-center mr-3">
-                                    <span className="text-indigo-800 font-medium text-sm">
-                                      {candidate.candidate.name.charAt(0)}
-                                    </span>
-                                  </div>
-                                )}
-                                <div>
-                                  <div className="text-sm font-medium text-gray-900">
-                                    {candidate.candidate.name}
-                                    {index === 0 && (
-                                      <span className="ml-2 text-xs text-green-600 bg-green-100 px-2 py-0.5 rounded-full">
-                                        Winner
-                                      </span>
-                                    )}
-                                  </div>
-                                  {candidate.candidate.class && (
-                                    <div className="text-xs text-gray-500">
-                                      {candidate.candidate.class}
-                                    </div>
-                                  )}
-                                </div>
-                              </div>
-                            </td>
-                            <td className="px-3 py-4 whitespace-nowrap">
-                              <div className="text-sm font-semibold text-gray-900">
-                                {candidate.voteCount}
-                              </div>
-                            </td>
-                            <td className="px-3 py-4">
-                              <div className="w-full bg-gray-200 rounded-full h-2.5">
-                                <div
-                                  className="bg-indigo-600 h-2.5 rounded-full"
-                                  style={{ width: `${candidate.percentage}%` }}
-                                ></div>
-                              </div>
-                              <div className="text-right text-xs mt-1 font-medium text-gray-500">
-                                {candidate.percentage.toFixed(1)}%
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
+            <div className="p-4 space-y-4">
+              {result.candidates
+                .sort((a, b) => b.voteCount - a.voteCount)
+                .map((candidateResult, index) => {
+                  const candidate = candidateResult.candidate;
+                  return (
+                    <div key={candidate._id} className="space-y-2">
+                      <div className="flex items-center space-x-3">
+                        <div className="relative">
+                          {candidate.image ? (
+                            <img
+                              src={candidate.image}
+                              alt={candidate.name}
+                              className="h-10 w-10 rounded-full object-cover border-2 border-white shadow-sm"
+                            />
+                          ) : (
+                            <div className="h-10 w-10 rounded-full bg-indigo-100 flex items-center justify-center border-2 border-white shadow-sm">
+                              <span className="text-indigo-800 font-medium text-sm">
+                                {candidate.name.charAt(0)}
+                              </span>
+                            </div>
+                          )}
+                          {index === 0 && (
+                            <div className="absolute -top-1 -right-1 bg-green-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-xs shadow-sm">
+                              1
+                            </div>
+                          )}
+                          {index === 1 && (
+                            <div className="absolute -top-1 -right-1 bg-yellow-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-xs shadow-sm">
+                              2
+                            </div>
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex justify-between items-center mb-1">
+                            <span className="text-sm text-gray-900">
+                              {candidate.name}
+                            </span>
+                            <div className="flex items-center">
+                              <span className="text-sm font-medium text-indigo-600">
+                                {candidateResult.voteCount}
+                              </span>
+                              <span className="text-xs text-gray-500 ml-1">
+                                ({candidateResult.percentage.toFixed(1)}%)
+                              </span>
+                            </div>
+                          </div>
+                          <div className="relative mt-2">
+                            <div className="overflow-hidden h-2 text-xs flex rounded bg-gray-100">
+                              <div
+                                style={{
+                                  width: `${candidateResult.percentage}%`,
+                                }}
+                                className={`shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center ${
+                                  index === 0
+                                    ? "bg-green-500"
+                                    : index === 1
+                                    ? "bg-yellow-500"
+                                    : "bg-indigo-500"
+                                }`}
+                              ></div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+            </div>
           </div>
         ))}
       </div>
+
+      {filteredResults.length === 0 && (
+        <div className="bg-white p-8 text-center rounded-lg shadow-md">
+          <BarChart2 className="mx-auto h-12 w-12 text-gray-400" />
+          <h3 className="mt-2 text-sm font-medium text-gray-900">
+            No results found
+          </h3>
+          <p className="mt-1 text-sm text-gray-500">
+            {results.length === 0
+              ? "No votes have been cast yet."
+              : "Try adjusting your search terms"}
+          </p>
+        </div>
+      )}
     </div>
   );
 };

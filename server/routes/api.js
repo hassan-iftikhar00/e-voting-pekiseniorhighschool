@@ -11,6 +11,7 @@ import * as houseController from "../controllers/houseController.js";
 import * as logController from "../controllers/logController.js";
 import * as roleController from "../controllers/roleController.js";
 import * as authController from "../controllers/authController.js";
+import * as analyticsController from "../controllers/analyticsController.js";
 import { authenticateToken, checkPermission } from "../middleware/auth.js";
 import { getCandidatesByPosition } from "../controllers/candidateController.js";
 import {
@@ -19,6 +20,7 @@ import {
 } from "../controllers/voterController.js";
 import { submitVote } from "../controllers/voteController.js";
 import User from "../models/User.js"; // Add this import for the User model
+import Setting from "../models/Setting.js"; // Add this import for the Setting model
 
 const router = express.Router();
 
@@ -60,6 +62,23 @@ router.get(
   electionController.getDetailedVoteAnalysis
 ); // Add this new route
 
+// Add this new route for toggling election status
+router.post(
+  "/election/toggle",
+  authenticateToken,
+  electionController.toggleElectionStatus
+);
+
+// Results endpoints
+router.get("/results", electionController.getResults);
+router.get("/election/status", electionController.getElectionStatus);
+router.post(
+  "/election/toggle-results",
+  authenticateToken,
+  checkPermission({ page: "results", action: "edit" }),
+  electionController.toggleResultsPublication
+);
+
 // Settings routes
 router.get("/settings", settingController.getSettings);
 router.put(
@@ -80,6 +99,19 @@ router.post(
   checkPermission({ page: "settings", action: "add" }),
   settingController.restoreSystem
 );
+
+// Add this route
+
+// Settings existence check - Fix by using imported Setting model
+router.get("/settings/check-exists", async (req, res) => {
+  try {
+    const settings = await Setting.findOne();
+    res.status(200).json({ exists: !!settings });
+  } catch (error) {
+    console.error("Error checking settings existence:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+});
 
 // Voter routes
 router.get("/voters", voterController.getAllVoters);
@@ -113,6 +145,9 @@ router.delete(
   checkPermission({ page: "voters", action: "delete" }),
   voterController.deleteVoter
 );
+
+// Add this new route for voter statistics
+router.get("/voters/stats", authenticateToken, voterController.getVoterStats);
 
 // Admin routes
 router.post("/admin/seed", adminController.seedTestData);
@@ -303,6 +338,21 @@ router.post("/voters/validate", validateVoter);
 
 // Define submitVote route with a direct function reference, not by variable name
 router.post("/votes/submit", submitVote);
+
+// Analytics routes
+router.get(
+  "/analytics/voting-patterns",
+  authenticateToken,
+  checkPermission({ page: "analytics", action: "view" }),
+  analyticsController.getVotingPatterns
+);
+
+router.get(
+  "/analytics/position/:positionId/results",
+  authenticateToken,
+  checkPermission({ page: "analytics", action: "view" }),
+  analyticsController.getPositionResults
+);
 
 // Protected Routes - all routes below this middleware require authentication
 router.use(authenticateToken);

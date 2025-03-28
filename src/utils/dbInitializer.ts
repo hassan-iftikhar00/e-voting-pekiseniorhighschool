@@ -66,6 +66,14 @@ export const initializeAfterLogin = (token: string, isAdmin = false) => {
           err.message
         );
       });
+
+      // Also initialize settings
+      initializeSettings(token).catch((err) => {
+        console.log(
+          "Settings initialization failed but continuing:",
+          err.message
+        );
+      });
     }, 1000);
   } catch (error) {
     console.log("Error in initializeAfterLogin:", error);
@@ -123,5 +131,50 @@ export const initializeDatabase = async (): Promise<void> => {
     }
   } catch (error) {
     console.error("Database initialization failed:", error);
+  }
+};
+
+const initializeSettings = async (authToken?: string) => {
+  if (!authToken) return;
+
+  try {
+    console.log("Checking if settings need initialization...");
+
+    const response = await fetch(`${API_BASE_URL}/api/settings/check-exists`, {
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${authToken}`,
+      },
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      if (!data.exists) {
+        console.log("Initializing default settings...");
+        // Create default settings
+        await fetch(`${API_BASE_URL}/api/settings`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${authToken}`,
+          },
+          body: JSON.stringify({
+            systemName: "Peki Senior High School Elections",
+            votingStartDate: "",
+            votingEndDate: "",
+            votingStartTime: "08:00",
+            votingEndTime: "16:00",
+            resultsPublished: false,
+            allowVoterRegistration: false,
+            requireEmailVerification: true,
+            maxVotesPerVoter: 1,
+          }),
+        });
+      } else {
+        console.log("Settings already exist, skipping initialization.");
+      }
+    }
+  } catch (error) {
+    console.error("Error checking/initializing settings:", error);
   }
 };

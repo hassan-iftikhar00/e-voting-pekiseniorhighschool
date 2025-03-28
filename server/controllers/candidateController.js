@@ -142,45 +142,46 @@ export const deleteCandidate = async (req, res) => {
 // Get all candidates grouped by position
 export const getCandidatesByPosition = async (req, res) => {
   try {
-    // Get all active positions
-    const positions = await Position.find({ isActive: true }).sort({
-      priority: 1,
-    });
+    // Get current election
+    const currentElection = await Election.findOne({ isCurrent: true });
+    if (!currentElection) {
+      return res.status(404).json({ message: "No active election found" });
+    }
 
-    // Get all active candidates
-    const candidates = await Candidate.find({ isActive: true })
-      .populate("position")
-      .sort({ position: 1, name: 1 });
+    // Get all positions
+    const positions = await Position.find({ isActive: true });
 
-    // Group candidates by position
+    // Create an object to store candidates by position name
     const candidatesByPosition = {};
 
-    // Initialize with empty arrays for all positions
-    positions.forEach((position) => {
-      candidatesByPosition[position.title] = [];
-    });
+    // For each position, find its candidates
+    for (const position of positions) {
+      const candidates = await Candidate.find({
+        positionId: position._id,
+        electionId: currentElection._id,
+        isActive: true,
+      });
 
-    // Add candidates to their respective positions
-    candidates.forEach((candidate) => {
-      if (
-        candidate.position &&
-        candidatesByPosition[candidate.position.title]
-      ) {
-        candidatesByPosition[candidate.position.title].push({
-          id: candidate._id,
-          name: candidate.name,
-          imageUrl: candidate.imageUrl || null,
-          bio: candidate.bio || "",
-          manifesto: candidate.manifesto || "",
-        });
+      // Map candidates to a format expected by the frontend
+      const mappedCandidates = candidates.map((candidate) => ({
+        id: candidate._id,
+        name: candidate.name,
+        imageUrl: candidate.image,
+        bio: candidate.biography,
+        position: position.name,
+      }));
+
+      // Only add positions that have candidates
+      if (mappedCandidates.length > 0) {
+        candidatesByPosition[position.name] = mappedCandidates;
       }
-    });
+    }
 
     res.status(200).json(candidatesByPosition);
   } catch (error) {
     console.error("Error fetching candidates by position:", error);
     res
       .status(500)
-      .json({ message: "Error fetching candidates", error: error.message });
+      .json({ message: "Failed to fetch candidates", error: error.message });
   }
 };

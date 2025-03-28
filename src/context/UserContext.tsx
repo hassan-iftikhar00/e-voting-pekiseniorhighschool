@@ -24,14 +24,20 @@ interface Role {
 
 interface User {
   _id: string;
+  id?: string; // Add id property which is sometimes used instead of _id
   username: string;
   email?: string;
   role?: Role | string;
   isActive?: boolean;
+  permissions?: Array<{
+    resource: string;
+    [key: string]: any; // Allow any permission action
+  }>;
 }
 
 interface UserContextType {
   user: User | null;
+  setUser: (user: User | null) => void;
   loading: boolean;
   isAuthenticated: boolean;
   authToken: string | null;
@@ -95,9 +101,16 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({
     }
   }, []);
 
+  // Fix the VotingAuth component issue by properly handling the conversion between _id and id
   const setUserData = (userData: User) => {
-    setUser(userData);
-    localStorage.setItem("user", JSON.stringify(userData));
+    // Ensure both _id and id are set for compatibility
+    const normalizedUser = {
+      ...userData,
+      id: userData.id || userData._id, // Make sure id is set
+    };
+
+    setUser(normalizedUser);
+    localStorage.setItem("user", JSON.stringify(normalizedUser));
   };
 
   const checkAuth = () => {
@@ -203,26 +216,27 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({
 
       const { token, user: userData } = response.data;
 
-      // Store token and user in localStorage
-      localStorage.setItem("authToken", token);
-      localStorage.setItem("user", JSON.stringify(userData));
-
-      // Set user with special handling for admin role
-      const userWithAdminFlag = {
+      // Normalize user data to include both _id and id
+      const normalizedUser = {
         ...userData,
+        id: userData.id || userData._id, // Make sure id is set
         isAdmin: isUserAdmin(userData.role),
       };
+
+      // Store token and user in localStorage
+      localStorage.setItem("authToken", token);
+      localStorage.setItem("user", JSON.stringify(normalizedUser));
 
       // Store token correctly (ensure it's stored with Bearer prefix)
       localStorage.setItem("token", token);
       setAuthToken(token);
 
       setAuthToken(token);
-      setUser(userWithAdminFlag);
+      setUser(normalizedUser);
       setIsAuthenticated(true);
 
       // Check if this is an admin user
-      const isAdmin = userWithAdminFlag.isAdmin;
+      const isAdmin = normalizedUser.isAdmin;
 
       // Call initializer with the token
       initializeAfterLogin(token, isAdmin);
@@ -235,16 +249,16 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({
             {
               action: "user:login",
               details: {
-                username: userWithAdminFlag.username,
-                userId: userWithAdminFlag._id,
+                username: normalizedUser.username,
+                userId: normalizedUser._id,
                 role:
-                  typeof userWithAdminFlag.role === "object"
-                    ? userWithAdminFlag.role?.name
-                    : userWithAdminFlag.role,
+                  typeof normalizedUser.role === "object"
+                    ? normalizedUser.role?.name
+                    : normalizedUser.role,
                 isAdmin,
               },
               resourceType: "user",
-              resourceId: userWithAdminFlag._id,
+              resourceId: normalizedUser._id,
             },
             {
               headers: {
@@ -260,7 +274,7 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({
         }
       })();
 
-      return { success: true, user: userWithAdminFlag };
+      return { success: true, user: normalizedUser };
     } catch (error) {
       console.log("Login error:", error);
 
@@ -303,6 +317,7 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({
 
   const value = {
     user,
+    setUser,
     loading,
     isAuthenticated,
     authToken,

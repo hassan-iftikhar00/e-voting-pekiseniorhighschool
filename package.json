@@ -17,6 +17,7 @@
   "dependencies": {
     "axios": "^1.8.3",
     "bcryptjs": "^3.0.2",
+    "canvas-confetti": "^1.9.3",
     "chart.js": "^4.4.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
@@ -32,6 +33,7 @@
     "react-router-dom": "^6.26.2"
   },
   "devDependencies": {
+    "@types/canvas-confetti": "^1.9.0",
     "@types/node": "^22.13.11",
     "@types/react": "^18.3.5",
     "@types/react-dom": "^18.3.0",

@@ -66,15 +66,144 @@ const VotingAuth: React.FC = () => {
   const [loading, setLoading] = useState({
     candidates: true,
     recentVoters: true,
+    submit: false, // Add a new property for submit operation
   });
 
   const monitorRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
   const { setUser } = useUser();
-  const { stats, electionStatus, timeRemaining } = useElection();
+  const { stats, electionStatus } = useElection();
   const { settings } = useSettings();
 
   const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:5000";
+
+  // Add state for the election data
+  const [currentElection, setCurrentElection] = useState<{
+    title: string;
+    date: string;
+    startDate?: string;
+    endDate?: string;
+    startTime: string;
+    endTime: string;
+    isActive: boolean;
+    resultsPublished?: boolean;
+  } | null>(null);
+  const [timeRemaining, setTimeRemaining] = useState("");
+
+  // Function to fetch election data
+  const fetchElectionStatus = async () => {
+    try {
+      const response = await fetch(
+        `${
+          import.meta.env.VITE_API_URL || "http://localhost:5000"
+        }/api/election/status`
+      );
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch election status: ${response.status}`);
+      }
+
+      const data = await response.json();
+      console.log("Election status data:", data);
+      setCurrentElection(data);
+    } catch (error) {
+      console.error("Error fetching election status:", error);
+    }
+  };
+
+  // Format date properly
+  const formatElectionDate = (dateString?: string) => {
+    if (!dateString) return "Unknown date";
+
+    try {
+      const date = new Date(dateString);
+      return date.toLocaleDateString("en-US", {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+      });
+    } catch (e) {
+      console.error("Error formatting date:", e);
+      return dateString;
+    }
+  };
+
+  // Calculate time remaining
+  const calculateTimeRemaining = () => {
+    if (!currentElection) return "";
+
+    const now = new Date();
+    let targetDate;
+
+    // Determine which date to use (endDate or date)
+    if (currentElection.isActive) {
+      // For active elections, target is the end date
+      const dateStr = currentElection.endDate || currentElection.date;
+      const [year, month, day] = dateStr.split("-").map(Number);
+      const [hours, minutes] = (currentElection.endTime || "17:00")
+        .split(":")
+        .map(Number);
+
+      targetDate = new Date(year, month - 1, day, hours, minutes);
+    } else {
+      // For inactive elections, target is the start date
+      const dateStr = currentElection.startDate || currentElection.date;
+      const [year, month, day] = dateStr.split("-").map(Number);
+      const [hours, minutes] = (currentElection.startTime || "08:00")
+        .split(":")
+        .map(Number);
+
+      targetDate = new Date(year, month - 1, day, hours, minutes);
+    }
+
+    // Calculate difference
+    const difference = targetDate.getTime() - now.getTime();
+
+    // If difference is negative, the date is in the past
+    if (difference <= 0) {
+      return currentElection.isActive
+        ? "Election has ended"
+        : "Election start date has passed";
+    }
+
+    // Calculate remaining time
+    const days = Math.floor(difference / (1000 * 60 * 60 * 24));
+    const hours = Math.floor(
+      (difference % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)
+    );
+    const minutes = Math.floor((difference % (1000 * 60 * 60)) / (1000 * 60));
+    const seconds = Math.floor((difference % (1000 * 60)) / 1000);
+
+    // Format the time remaining
+    let result = "";
+    if (days > 0) result += `${days}d `;
+    if (hours > 0) result += `${hours}h `;
+    if (minutes > 0) result += `${minutes}m `;
+    result += `${seconds}s`;
+
+    return result;
+  };
+
+  // Fix the useEffect that's causing the infinite loop
+  useEffect(() => {
+    // Fetch election status initially
+    fetchElectionStatus();
+
+    // Set up regular polling for election status
+    const statusInterval = setInterval(fetchElectionStatus, 15000); // Poll every 15 seconds
+
+    // Update time remaining every second
+    const timeInterval = setInterval(() => {
+      if (currentElection) {
+        setTimeRemaining(calculateTimeRemaining());
+      }
+    }, 1000);
+
+    return () => {
+      clearInterval(statusInterval);
+      clearInterval(timeInterval);
+    };
+  }, []); // Keep empty dependency array to prevent re-creating intervals
 
   // Fetch candidates by position
   useEffect(() => {
@@ -86,6 +215,7 @@ const VotingAuth: React.FC = () => {
         setPositions(Object.keys(response.data));
       } catch (error) {
         console.error("Error fetching candidates:", error);
+        setCandidatesByPosition({});
       } finally {
         setLoading((prev) => ({ ...prev, candidates: false }));
       }
@@ -136,20 +266,29 @@ const VotingAuth: React.FC = () => {
   // Add effect for position rotation
   useEffect(() => {
     if (positions.length === 0) return;
-
     const interval = setInterval(() => {
       setCurrentPositionIndex((prev) => (prev + 1) % positions.length);
-    }, 10000); // 10 seconds
-
+    }, 10000); // 10 seconds rotation
     return () => clearInterval(interval);
   }, [positions.length]);
+
+  // Add these logs before the map operation
+  useEffect(() => {
+    console.log("Positions array:", positions);
+    console.log("Current position index:", currentPositionIndex);
+    console.log("Current position:", positions[currentPositionIndex]);
+    console.log("candidatesByPosition:", candidatesByPosition);
+    console.log(
+      "Candidates for current position:",
+      candidatesByPosition[positions[currentPositionIndex]]
+    );
+  }, [positions, currentPositionIndex, candidatesByPosition]);
 
   const validateVoter = async (voterId: string) => {
     try {
       const response = await axios.post(`${apiUrl}/api/voters/validate`, {
         voterId,
       });
-
       if (response.data.success) {
         return response.data.voter;
       }
@@ -160,21 +299,88 @@ const VotingAuth: React.FC = () => {
     }
   };
 
+  const formatDate = (dateInput: Date | string) => {
+    try {
+      // Convert string to Date if needed
+      const date = dateInput instanceof Date ? dateInput : new Date(dateInput);
+
+      // Check if date is valid before using date methods
+      if (isNaN(date.getTime())) {
+        return "Invalid date";
+      }
+
+      const day = date.getDate();
+      const month = date.toLocaleString("default", { month: "short" });
+      const year = date.getFullYear();
+      return `${day}-${month}-${year}`;
+    } catch (error) {
+      console.error("Error formatting date:", error);
+      return "Date unavailable";
+    }
+  };
+
+  const formatTime = (dateInput: Date | string) => {
+    try {
+      // Convert string to Date if needed
+      const date = dateInput instanceof Date ? dateInput : new Date(dateInput);
+
+      // Check if date is valid
+      if (isNaN(date.getTime())) {
+        return "Invalid time";
+      }
+
+      return date.toLocaleString("default", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true,
+      });
+    } catch (error) {
+      console.error("Error formatting time:", error);
+      return "Time unavailable";
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError("");
+    setUsedVoterInfo(null);
+
+    if (!votingId.trim()) {
+      setError("Please enter your Voter ID");
+      return;
+    }
+
     try {
+      // Check if election is active
+      if (!currentElection?.isActive) {
+        setError(
+          currentElection
+            ? "Election is not currently active. Please try again later."
+            : "Election information not available. Please refresh the page."
+        );
+        return;
+      }
+
+      // Show loading state
+      setLoading((prev) => ({ ...prev, submit: true }));
+
       const voter = await validateVoter(votingId);
       if (!voter) {
         setUsedVoterInfo(null);
-        throw new Error("Invalid Voter ID");
+        throw new Error("Invalid Voter ID. Please check and try again.");
       }
 
       if (voter.hasVoted) {
-        setError("Already voted");
+        setError("This Voter ID has already been used to cast a vote");
+        // Ensure votedAt is properly handled regardless of format
+        const votedAtDate = voter.votedAt
+          ? new Date(voter.votedAt)
+          : new Date();
+
         setUsedVoterInfo({
           name: voter.name,
           voterId: voter.voterId,
-          votedAt: "votedAt" in voter ? voter.votedAt : new Date(),
+          votedAt: votedAtDate,
         });
         return;
       }
@@ -182,26 +388,20 @@ const VotingAuth: React.FC = () => {
       setUsedVoterInfo(null);
       localStorage.setItem("token", "mock-token-for-voter");
       localStorage.setItem("voterId", voter.voterId);
-      setUser({ id: voter.id, username: voter.name, role: "voter" });
+
+      setUser({
+        _id: voter.id,
+        id: voter.id,
+        username: voter.name,
+        role: "voter",
+      });
+
       navigate("/candidates");
     } catch (error: any) {
       setError(error.message || "Invalid Voter ID. Please try again.");
+    } finally {
+      setLoading((prev) => ({ ...prev, submit: false }));
     }
-  };
-
-  const formatDate = (date: Date) => {
-    const day = date.getDate();
-    const month = date.toLocaleString("default", { month: "short" });
-    const year = date.getFullYear();
-    return `${day}th-${month}-${year}`;
-  };
-
-  const formatTime = (date: Date) => {
-    return date.toLocaleString("default", {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: true,
-    });
   };
 
   // Chart data
@@ -244,6 +444,43 @@ const VotingAuth: React.FC = () => {
     },
   };
 
+  // Render candidates with null check
+  const renderCandidates = () => {
+    if (
+      !positions.length ||
+      !positions[currentPositionIndex] ||
+      !candidatesByPosition[positions[currentPositionIndex]]
+    ) {
+      return (
+        <div className="text-center py-8">
+          <p>No candidates available for this position.</p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+        {(candidatesByPosition[positions[currentPositionIndex]] || []).map(
+          (candidate) => (
+            <div
+              key={candidate.id}
+              className="bg-gradient-to-br from-indigo-50 to-purple-50 rounded-lg p-1"
+            >
+              <img
+                src={candidate.imageUrl || "/placeholder-candidate.png"}
+                alt={candidate.name}
+                className="w-[5cm] h-[5cm] object-cover rounded-md mx-auto"
+              />
+              <div className="text-lg font-medium text-gray-900 truncate text-center">
+                {candidate.name}
+              </div>
+            </div>
+          )
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-indigo-800 flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8 relative overflow-hidden">
       {/* Election Info Bar */}
@@ -255,28 +492,29 @@ const VotingAuth: React.FC = () => {
         <div className="bg-white/10 backdrop-blur-sm rounded-lg px-4 py-2 text-white border border-white/20 flex items-center">
           <Calendar className="h-4 w-4 mr-2" />
           <span className="text-sm font-bold">
-            Election Date: 15th May, 2025
+            Election Date:{" "}
+            {currentElection
+              ? formatElectionDate(
+                  currentElection.endDate || currentElection.date
+                )
+              : "Loading..."}
           </span>
         </div>
 
         <div
           className={`rounded-lg px-4 py-2 text-sm font-medium ${
-            electionStatus === "not-started"
-              ? "bg-yellow-300 text-black"
-              : electionStatus === "active"
+            currentElection?.isActive
               ? "bg-green-500 text-white"
-              : "bg-red-500 text-white"
+              : "bg-yellow-300 text-black"
           }`}
         >
           <div className="flex items-center">
             <Clock className="h-4 w-4 mr-2" />
-            {electionStatus === "not-started" && (
+            {currentElection?.isActive ? (
+              <span>Election ends in: {timeRemaining}</span>
+            ) : (
               <span>Election starts in: {timeRemaining}</span>
             )}
-            {electionStatus === "active" && (
-              <span>Election ends in: {timeRemaining}</span>
-            )}
-            {electionStatus === "ended" && <span>Election has ended!</span>}
           </div>
         </div>
       </div>
@@ -317,7 +555,6 @@ const VotingAuth: React.FC = () => {
             {settings.electionTitle || "Student Council Election 2025"}
           </p>
         </div>
-
         <form className="space-y-6" onSubmit={handleSubmit}>
           <div>
             <h3 className="text-center text-2xl font-bold text-white">
@@ -341,18 +578,18 @@ const VotingAuth: React.FC = () => {
                   name="votingId"
                   type="text"
                   required
-                  disabled={electionStatus !== "active"}
+                  disabled={!currentElection?.isActive}
                   className={`appearance-none rounded-lg relative block w-full px-4 py-3 pl-10 bg-white/10 backdrop-blur-sm border-2 border-white/20 placeholder-indigo-300 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent focus:z-10 text-lg transition-all duration-300 ${
-                    electionStatus !== "active"
+                    !currentElection?.isActive
                       ? "opacity-50 cursor-not-allowed"
                       : ""
                   }`}
                   placeholder={
-                    electionStatus === "not-started"
-                      ? `Voting starts in ${timeRemaining}`
-                      : electionStatus === "ended"
-                      ? "Election has ended"
-                      : "Enter your Voter ID here"
+                    currentElection?.isActive
+                      ? "Enter your Voter ID here"
+                      : currentElection
+                      ? `Election starts in ${timeRemaining}`
+                      : "Loading election status..."
                   }
                   value={votingId}
                   onChange={(e) => {
@@ -392,7 +629,7 @@ const VotingAuth: React.FC = () => {
                 </div>
                 <div className="ml-3 w-full">
                   <h3 className="text-sm font-medium text-red-200 mb-1">
-                    This voter has already cast his/her vote
+                    This voter has already cast a vote
                   </h3>
 
                   <div className="mt-2 bg-white/5 backdrop-blur-sm p-3 rounded-md border border-red-500/10 text-xs text-red-200">
@@ -417,18 +654,18 @@ const VotingAuth: React.FC = () => {
           <div>
             <button
               type="submit"
-              disabled={electionStatus !== "active"}
+              disabled={!currentElection?.isActive}
               className={`group relative w-full flex justify-center py-3 px-4 border border-transparent text-lg font-medium rounded-lg text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-all duration-300 ${
-                electionStatus !== "active"
+                !currentElection?.isActive
                   ? "opacity-50 cursor-not-allowed"
                   : ""
               }`}
             >
-              {electionStatus === "active"
+              {currentElection?.isActive
                 ? "Verify Voter ID"
-                : electionStatus === "not-started"
+                : currentElection
                 ? "Polls will be opened soon"
-                : "Polls are closed till next election"}
+                : "Loading election status..."}
             </button>
           </div>
         </form>
@@ -495,28 +732,29 @@ const VotingAuth: React.FC = () => {
               <div className="flex items-center space-x-2">
                 <div className="bg-white/10 backdrop-blur-sm rounded-lg px-3 py-1.5 text-gray-700 border border-gray-200 flex items-center">
                   <Calendar className="h-4 w-4 mr-2" />
-                  <span className="text-sm">Election Date: 15th May, 2025</span>
+                  <span className="text-sm">
+                    Election Date:{" "}
+                    {currentElection
+                      ? formatElectionDate(
+                          currentElection.endDate || currentElection.date
+                        )
+                      : "Loading..."}
+                  </span>
                 </div>
 
                 <div
                   className={`rounded-lg px-3 py-1.5 text-sm font-medium ${
-                    electionStatus === "not-started"
-                      ? "bg-yellow-300 text-black"
-                      : electionStatus === "active"
+                    currentElection?.isActive
                       ? "bg-green-500 text-white"
-                      : "bg-red-500 text-white"
+                      : "bg-yellow-300 text-black"
                   }`}
                 >
                   <div className="flex items-center">
                     <Clock className="h-4 w-4 mr-2" />
-                    {electionStatus === "not-started" && (
-                      <span>Election starts in: {timeRemaining}</span>
-                    )}
-                    {electionStatus === "active" && (
+                    {currentElection?.isActive ? (
                       <span>Election ends in: {timeRemaining}</span>
-                    )}
-                    {electionStatus === "ended" && (
-                      <span>Election has ended!</span>
+                    ) : (
+                      <span>Election starts in: {timeRemaining}</span>
                     )}
                   </div>
                 </div>
@@ -584,7 +822,7 @@ const VotingAuth: React.FC = () => {
                 </div>
               </div>
 
-              {/* Chart */}
+              {/* Completion */}
               <div className="bg-gradient-to-br from-gray-50 to-slate-50 rounded-xl p-4">
                 <div className="flex items-center justify-between">
                   <div>
@@ -596,66 +834,73 @@ const VotingAuth: React.FC = () => {
                       %
                     </p>
                   </div>
-                  <div className="relative h-[80px] w-[80px]">
-                    <Doughnut data={chartData} options={chartOptions} />
-                  </div>
+                  <Shield className="h-10 w-10 text-gray-500" />
                 </div>
               </div>
             </div>
 
-            {/* Current Position Candidates */}
-            <div className="bg-white rounded-lg p-4 shadow-sm">
-              <AnimatePresence mode="wait">
-                {positions.length > 0 &&
-                candidatesByPosition[positions[currentPositionIndex]] ? (
-                  <motion.div
-                    key={positions[currentPositionIndex]}
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -20 }}
-                    transition={{ duration: 0.5 }}
-                  >
-                    <h5 className="text-xl font-medium text-gray-900 mb-2">
-                      {positions[currentPositionIndex]}
-                    </h5>
-                    <div className="grid grid-cols-5 gap-2">
-                      {candidatesByPosition[
-                        positions[currentPositionIndex]
-                      ].map((candidate) => (
-                        <motion.div
-                          key={candidate.id}
-                          initial={{ scale: 0.9, opacity: 0 }}
-                          animate={{ scale: 1, opacity: 1 }}
-                          transition={{ duration: 0.3 }}
-                          className="bg-gradient-to-br from-indigo-50 to-purple-50 rounded-lg p-1"
-                        >
-                          <div className="relative mb-1">
-                            <img
-                              src={
-                                candidate.imageUrl ||
-                                "/placeholder-candidate.png"
-                              } // Add a fallback image
-                              alt={candidate.name}
-                              className="w-[5cm] h-[5cm] object-cover rounded-md mx-auto"
-                            />
-                          </div>
-                          <div className="text-lg font-medium text-gray-900 truncate text-center">
-                            {candidate.name}
-                          </div>
-                        </motion.div>
-                      ))}
-                    </div>
-                  </motion.div>
-                ) : (
-                  <div className="flex justify-center items-center h-32">
-                    <RefreshCw className="h-8 w-8 text-indigo-400 animate-spin" />
-                    <span className="ml-3 text-gray-600">
-                      Loading candidates...
-                    </span>
-                  </div>
-                )}
-              </AnimatePresence>
+            {/* Chart */}
+            <div className="relative h-[80px] w-[80px]">
+              <Doughnut data={chartData} options={chartOptions} />
             </div>
+
+            {/* Current Position Candidates */}
+            {showMonitor && candidatesByPosition && (
+              <div className="bg-white rounded-lg p-4 shadow-sm">
+                <AnimatePresence mode="wait">
+                  {positions.length > 0 ? (
+                    <motion.div
+                      key={positions[currentPositionIndex]}
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -20 }}
+                      transition={{ duration: 0.5 }}
+                    >
+                      <h5 className="text-xl font-medium text-gray-900 mb-2">
+                        {positions[currentPositionIndex]}
+                      </h5>
+                      <div className="grid grid-cols-5 gap-2">
+                        {(
+                          candidatesByPosition[
+                            positions[currentPositionIndex]
+                          ] || []
+                        ).map((candidate) => (
+                          <motion.div
+                            key={candidate.id}
+                            initial={{ scale: 0.9, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            transition={{ duration: 0.3 }}
+                            className="bg-gradient-to-br from-indigo-50 to-purple-50 rounded-lg p-1"
+                          >
+                            {/* Candidate content */}
+                            <div className="relative mb-1">
+                              <img
+                                src={
+                                  candidate.imageUrl ||
+                                  "/placeholder-candidate.png"
+                                }
+                                alt={candidate.name}
+                                className="w-[5cm] h-[5cm] object-cover rounded-md mx-auto"
+                              />
+                            </div>
+                            <div className="text-lg font-medium text-gray-900 truncate text-center">
+                              {candidate.name}
+                            </div>
+                          </motion.div>
+                        ))}
+                      </div>
+                    </motion.div>
+                  ) : (
+                    <div className="flex justify-center items-center h-32">
+                      <RefreshCw className="h-8 w-8 text-indigo-400 animate-spin" />
+                      <span className="ml-3 text-gray-600">
+                        Loading candidates...
+                      </span>
+                    </div>
+                  )}
+                </AnimatePresence>
+              </div>
+            )}
 
             {/* Recently Voted */}
             <div className="bg-gray-50 rounded-lg p-4">
@@ -692,30 +937,28 @@ const VotingAuth: React.FC = () => {
                           </div>
                         ))
                     : // Actual voter data
-                      [...recentVoters, ...recentVoters, ...recentVoters].map(
-                        (voter, index) => (
-                          <div
-                            key={`${voter._id}-${index}`}
-                            className="flex items-center space-x-3 bg-white rounded-lg px-5 py-4 shadow-sm mr-4 flex-shrink-0"
-                            style={{ width: "300px" }}
-                          >
-                            <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center">
-                              <User className="h-5 w-5 text-indigo-600" />
-                            </div>
-                            <div className="min-w-0">
-                              <p className="text-lg font-medium text-gray-900 truncate">
-                                {voter.name}
-                              </p>
-                              <p className="text-base text-gray-500 truncate">
-                                {voter.voterId}
-                              </p>
-                            </div>
+                      [...recentVoters, ...recentVoters].map((voter, index) => (
+                        <div
+                          key={`${voter._id}-${index}`}
+                          className="flex items-center space-x-3 bg-white rounded-lg px-5 py-4 shadow-sm mr-4 flex-shrink-0"
+                          style={{ width: "300px" }}
+                        >
+                          <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center">
+                            <User className="h-5 w-5 text-indigo-600" />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-lg font-medium text-gray-900 truncate">
+                              {voter.name}
+                            </p>
+                            <p className="text-base text-gray-500 truncate">
+                              {voter.voterId}
+                            </p>
                             <div className="text-base text-gray-400 whitespace-nowrap">
                               {formatTime(new Date(voter.votedAt))}
                             </div>
                           </div>
-                        )
-                      )}
+                        </div>
+                      ))}
                 </motion.div>
               </div>
             </div>

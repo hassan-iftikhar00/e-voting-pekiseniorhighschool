@@ -268,7 +268,6 @@ export const validateVoter = async (req, res) => {
       });
     }
 
-    // Find the voter by voter ID
     const voter = await Voter.findOne({ voterId });
 
     if (!voter) {
@@ -278,19 +277,25 @@ export const validateVoter = async (req, res) => {
       });
     }
 
-    // Return voter details including whether they have voted
+    // Format the response to ensure consistent date handling
+    const formattedVoter = {
+      id: voter._id,
+      name: voter.name,
+      voterId: voter.voterId,
+      hasVoted: voter.hasVoted,
+      // Format dates properly for client consumption
+      votedAt: voter.votedAt ? voter.votedAt.toISOString() : null,
+      electionId: voter.electionId,
+      year: voter.year,
+      class: voter.class,
+      house: voter.house,
+      gender: voter.gender,
+    };
+
     return res.status(200).json({
       success: true,
-      voter: {
-        id: voter._id,
-        name: voter.name,
-        voterId: voter.voterId,
-        hasVoted: voter.hasVoted,
-        votedAt: voter.votedAt,
-        class: voter.class,
-        year: voter.year,
-        house: voter.house,
-      },
+      message: "Voter validated successfully",
+      voter: formattedVoter,
     });
   } catch (error) {
     console.error("Error validating voter:", error);
@@ -299,5 +304,41 @@ export const validateVoter = async (req, res) => {
       message: "Error validating voter",
       error: error.message,
     });
+  }
+};
+
+// Get voter statistics
+export const getVoterStats = async (req, res) => {
+  try {
+    // Find current election (or use a default one)
+    const currentElection = await Election.findOne({ isCurrent: true });
+
+    if (!currentElection) {
+      return res.status(200).json({
+        totalVoters: 0,
+        activeVoters: 0,
+        votedVoters: 0,
+        votingPercentage: 0,
+      });
+    }
+
+    // Count voters
+    const totalVoters = await Voter.countDocuments();
+    const activeVoters = await Voter.countDocuments({ active: true });
+    const votedVoters = await Voter.countDocuments({ hasVoted: true });
+
+    // Calculate percentage
+    const votingPercentage =
+      totalVoters > 0 ? Math.round((votedVoters / totalVoters) * 100) : 0;
+
+    res.status(200).json({
+      totalVoters,
+      activeVoters,
+      votedVoters,
+      votingPercentage,
+    });
+  } catch (error) {
+    console.error("Error fetching voter stats:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
   }
 };

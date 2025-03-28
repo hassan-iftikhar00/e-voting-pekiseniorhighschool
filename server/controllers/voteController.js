@@ -1,74 +1,120 @@
-import Vote from "../models/Vote.js";
 import Voter from "../models/Voter.js";
+import Vote from "../models/Vote.js";
+import Election from "../models/Election.js";
+import Position from "../models/Position.js";
 import Candidate from "../models/Candidate.js";
+import mongoose from "mongoose";
 
-// Submit a vote - ensure this is properly exported
+// Submit a vote
 export const submitVote = async (req, res) => {
   try {
-    const { voterId, selections } = req.body;
+    console.log("Vote submission request received:", req.body);
 
-    // Validate required fields
-    if (!voterId || !selections || !Object.keys(selections).length) {
-      return res.status(400).json({
-        success: false,
-        message: "Voter ID and selections are required",
-      });
+    const { voterId, selections, abstentions } = req.body;
+
+    if (!voterId) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Voter ID is required" });
     }
 
-    // Find the voter
-    const voter = await Voter.findOne({ voterId });
+    // Verify the voter exists and hasn't voted yet
+    const voter = await Voter.findOne({ voterId: voterId });
+
     if (!voter) {
-      return res.status(404).json({
-        success: false,
-        message: "Voter not found",
-      });
+      return res
+        .status(404)
+        .json({ success: false, message: "Voter not found" });
     }
 
-    // Check if voter has already voted
     if (voter.hasVoted) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Voter has already cast a vote" });
+    }
+
+    // Get the current election
+    const currentElection = await Election.findOne({ isCurrent: true });
+    if (!currentElection) {
+      return res
+        .status(404)
+        .json({ success: false, message: "No active election found" });
+    }
+
+    // Validate the vote data
+    if (!selections || !Array.isArray(selections)) {
       return res.status(400).json({
         success: false,
-        message: "Voter has already cast a vote",
+        message: "Invalid vote data: selections must be an array",
       });
     }
 
-    // Process each vote
-    const votePromises = Object.entries(selections).map(
-      async ([positionId, candidateId]) => {
-        // Create vote record
+    // Create individual vote records for each selection
+    const votePromises = selections.map(async (selection) => {
+      // Make sure position is not undefined
+      const positionName =
+        selection.position === "undefined"
+          ? "Unknown Position"
+          : selection.position;
+
+      // Create candidate ObjectId only if candidateId exists and is valid
+      let candidateId = null;
+      if (
+        selection.candidateId &&
+        String(selection.candidateId).match(/^[0-9a-fA-F]{24}$/)
+      ) {
+        candidateId = new mongoose.Types.ObjectId(selection.candidateId);
+      }
+
+      // Create a new vote document with direct properties (not nested)
+      const vote = new Vote({
+        voter: voter._id,
+        election: currentElection._id,
+        position: positionName,
+        candidate: candidateId,
+        timestamp: new Date(),
+        isAbstention: false,
+      });
+
+      return vote.save();
+    });
+
+    // Add abstention votes
+    if (abstentions && Array.isArray(abstentions)) {
+      abstentions.forEach((ab) => {
+        const positionName =
+          ab.position === "undefined" ? "Unknown Position" : ab.position;
+
         const vote = new Vote({
           voter: voter._id,
-          position: positionId,
-          candidate: candidateId,
+          election: currentElection._id,
+          position: positionName,
           timestamp: new Date(),
+          isAbstention: true,
         });
 
-        await vote.save();
+        votePromises.push(vote.save());
+      });
+    }
 
-        // Increment candidate vote count
-        await Candidate.findByIdAndUpdate(candidateId, { $inc: { votes: 1 } });
-
-        return vote;
-      }
-    );
-
-    // Wait for all votes to be processed
+    // Wait for all votes to be saved
     await Promise.all(votePromises);
 
-    // Update voter status
+    // Mark the voter as having voted
     voter.hasVoted = true;
     voter.votedAt = new Date();
     await voter.save();
 
-    res.status(200).json({
+    // Return success
+    return res.status(200).json({
       success: true,
       message: "Vote submitted successfully",
     });
   } catch (error) {
     console.error("Error submitting vote:", error);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
-      message: "Error submitting vote",
+      message: "Failed to submit vote",
       error: error.message,
     });
   }

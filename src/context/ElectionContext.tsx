@@ -5,6 +5,7 @@ import React, {
   useEffect,
   ReactNode,
 } from "react";
+import axios from "axios"; // Add axios import
 
 interface ElectionStats {
   totalVoters: number;
@@ -121,41 +122,25 @@ export const ElectionProvider: React.FC<{ children: ReactNode }> = ({
     }
   };
 
-  // Fetch election status from API with better error handling
+  // Update the function that fetches election status
   const fetchElectionStatus = async () => {
     try {
-      console.log(
-        `Fetching election status from ${API_BASE_URL}/api/elections/status`
-      );
       const response = await fetch(`${API_BASE_URL}/api/elections/status`);
 
+      if (!response.ok) {
+        throw new Error(`Failed to fetch election status: ${response.status}`);
+      }
+
       const data = await response.json();
-      console.log("Received election status:", data);
 
-      // Even if there's a message about no active election, continue with the data we got
-      setElectionStatus(data.status);
-      if (data.targetTime) {
-        setTargetTime(new Date(data.targetTime));
-      } else {
-        setTargetTime(null);
-      }
-
-      // Check if we need to create a default election
-      if (data.message === "No active election found") {
-        console.log("No active election found. Creating default election...");
-        try {
-          await fetch(`${API_BASE_URL}/api/elections/default`, {
-            method: "POST",
-          });
-        } catch (createErr) {
-          console.error("Failed to create default election", createErr);
-        }
-      }
-    } catch (err: any) {
-      console.error("Error fetching election status:", err);
-      setError(err.message);
-      // Switch to fallback data
-      setUseFallbackData(true);
+      // Important: Respect the isActive flag from the server
+      setElectionStatus(
+        data.isActive ? "active" : data.status || "not-started"
+      );
+    } catch (error) {
+      console.error("Error fetching election status:", error);
+      // Set a default value instead of null
+      setElectionStatus("not-started");
     } finally {
       setLoading(false);
     }
