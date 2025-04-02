@@ -69,6 +69,14 @@ const DetailedVoteAnalysis: React.FC = () => {
   const [filter, setFilter] = useState<"class" | "house" | "year">("class");
   const [searchTerm, setSearchTerm] = useState("");
 
+  // Utility function for safe number formatting
+  const safeNumber = (value: any, decimals: number = 2): string => {
+    if (value === undefined || value === null || isNaN(value)) {
+      return (0).toFixed(decimals);
+    }
+    return Number(value).toFixed(decimals);
+  };
+
   // Check user permissions once
   const canViewAnalytics = hasPermission("analytics", "view");
   const canExportAnalytics = hasPermission("analytics", "export");
@@ -123,7 +131,18 @@ const DetailedVoteAnalysis: React.FC = () => {
       }
 
       const data = await response.json();
-      setMetrics(data);
+
+      // Transform received data to ensure proper structure (only ensuring arrays)
+      const safeData = {
+        ...data,
+        byClass: Array.isArray(data.byClass) ? data.byClass : [],
+        byHouse: Array.isArray(data.byHouse) ? data.byHouse : [],
+        byYear: Array.isArray(data.byYear) ? data.byYear : [],
+        votingTimeline: Array.isArray(data.votingTimeline)
+          ? data.votingTimeline
+          : [],
+      };
+      setMetrics(safeData);
     } catch (error: any) {
       console.error("Error fetching voting analytics:", error);
       setError(error.message || "Failed to load voting analytics");
@@ -223,14 +242,14 @@ const DetailedVoteAnalysis: React.FC = () => {
               </div>
               <div class="metric-item">
                 <div class="metric-label">Voter Turnout</div>
-                <div class="metric-value">${metrics.turnoutPercentage.toFixed(
-                  1
+                <div class="metric-value">${safeNumber(
+                  metrics.turnoutPercentage
                 )}%</div>
               </div>
               <div class="metric-item">
                 <div class="metric-label">Avg. Votes Per Position</div>
-                <div class="metric-value">${metrics.averageVotesPerPosition.toFixed(
-                  1
+                <div class="metric-value">${safeNumber(
+                  metrics.averageVotesPerPosition
                 )}</div>
               </div>
             </div>
@@ -252,7 +271,7 @@ const DetailedVoteAnalysis: React.FC = () => {
                 <tr>
                   <td>${item.class || "Unknown"}</td>
                   <td>${item.count}</td>
-                  <td>${item.percentage.toFixed(1)}%</td>
+                  <td>${safeNumber(item.percentage)}%</td>
                 </tr>
               `
                 )
@@ -276,7 +295,7 @@ const DetailedVoteAnalysis: React.FC = () => {
                 <tr>
                   <td>${item.house || "Unknown"}</td>
                   <td>${item.count}</td>
-                  <td>${item.percentage.toFixed(1)}%</td>
+                  <td>${safeNumber(item.percentage)}%</td>
                 </tr>
               `
                 )
@@ -300,7 +319,7 @@ const DetailedVoteAnalysis: React.FC = () => {
                 <tr>
                   <td>${item.year || "Unknown"}</td>
                   <td>${item.count}</td>
-                  <td>${item.percentage.toFixed(1)}%</td>
+                  <td>${safeNumber(item.percentage)}%</td>
                 </tr>
               `
                 )
@@ -358,7 +377,7 @@ const DetailedVoteAnalysis: React.FC = () => {
     metrics.byClass.forEach((item) => {
       csvContent += `Class,${item.class || "Unknown"},${
         item.count
-      },${item.percentage.toFixed(1)}%\n`;
+      },${safeNumber(item.percentage)}%\n`;
     });
 
     // House data
@@ -366,15 +385,15 @@ const DetailedVoteAnalysis: React.FC = () => {
     metrics.byHouse.forEach((item) => {
       csvContent += `House,${item.house || "Unknown"},${
         item.count
-      },${item.percentage.toFixed(1)}%\n`;
+      },${safeNumber(item.percentage)}%\n`;
     });
 
     // Year data
     csvContent += "\n";
     metrics.byYear.forEach((item) => {
-      csvContent += `Year,${item.year || "Unknown"},${
-        item.count
-      },${item.percentage.toFixed(1)}%\n`;
+      csvContent += `Year,${item.year || "Unknown"},${item.count},${safeNumber(
+        item.percentage
+      )}%\n`;
     });
 
     // Timeline data
@@ -387,11 +406,11 @@ const DetailedVoteAnalysis: React.FC = () => {
     csvContent += "\nKey Metrics,Value\n";
     csvContent += `Total Votes,${metrics.totalVotes}\n`;
     csvContent += `Total Eligible Voters,${metrics.totalEligibleVoters}\n`;
-    csvContent += `Turnout Percentage,${metrics.turnoutPercentage.toFixed(
-      1
+    csvContent += `Turnout Percentage,${safeNumber(
+      metrics.turnoutPercentage
     )}%\n`;
-    csvContent += `Average Votes Per Position,${metrics.averageVotesPerPosition.toFixed(
-      1
+    csvContent += `Average Votes Per Position,${safeNumber(
+      metrics.averageVotesPerPosition
     )}\n`;
 
     // Create and download the file
@@ -452,23 +471,28 @@ const DetailedVoteAnalysis: React.FC = () => {
   const getFilteredData = () => {
     if (!metrics) return [];
 
+    // Ensure we're working with arrays and provide fallbacks
+    const ensureArray = (data: any) => {
+      return Array.isArray(data) ? data : [];
+    };
+
     switch (filter) {
       case "class":
-        return metrics.byClass.filter(
+        return ensureArray(metrics.byClass).filter(
           (item) =>
             !searchTerm ||
             (item.class &&
               item.class.toLowerCase().includes(searchTerm.toLowerCase()))
         );
       case "house":
-        return metrics.byHouse.filter(
+        return ensureArray(metrics.byHouse).filter(
           (item) =>
             !searchTerm ||
             (item.house &&
               item.house.toLowerCase().includes(searchTerm.toLowerCase()))
         );
       case "year":
-        return metrics.byYear.filter(
+        return ensureArray(metrics.byYear).filter(
           (item) =>
             !searchTerm ||
             (item.year &&
@@ -657,7 +681,7 @@ const DetailedVoteAnalysis: React.FC = () => {
                     Total Votes
                   </p>
                   <p className="text-2xl font-semibold text-gray-900">
-                    {metrics.totalVotes}
+                    {metrics.totalVotes || 0}
                   </p>
                 </div>
               </div>
@@ -673,7 +697,7 @@ const DetailedVoteAnalysis: React.FC = () => {
                     Eligible Voters
                   </p>
                   <p className="text-2xl font-semibold text-gray-900">
-                    {metrics.totalEligibleVoters}
+                    {metrics.totalEligibleVoters || 0}
                   </p>
                 </div>
               </div>
@@ -687,7 +711,7 @@ const DetailedVoteAnalysis: React.FC = () => {
                 <div className="ml-4">
                   <p className="text-sm font-medium text-gray-500">Turnout</p>
                   <p className="text-2xl font-semibold text-gray-900">
-                    {metrics.turnoutPercentage.toFixed(1)}%
+                    {safeNumber(metrics.turnoutPercentage || 0)}%
                   </p>
                 </div>
               </div>
@@ -703,7 +727,7 @@ const DetailedVoteAnalysis: React.FC = () => {
                     Avg. Per Position
                   </p>
                   <p className="text-2xl font-semibold text-gray-900">
-                    {metrics.averageVotesPerPosition.toFixed(1)}
+                    {safeNumber(metrics.averageVotesPerPosition || 0)}
                   </p>
                 </div>
               </div>
@@ -775,7 +799,7 @@ const DetailedVoteAnalysis: React.FC = () => {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="text-sm text-gray-900">
-                          {item.percentage.toFixed(1)}%
+                          {safeNumber(item.percentage)}%
                         </div>
                       </td>
                       {chartType === "bar" && (

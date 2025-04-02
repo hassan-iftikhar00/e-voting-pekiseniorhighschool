@@ -1,9 +1,9 @@
 import Election from "../models/Election.js";
+import Setting from "../models/Setting.js";
 import Voter from "../models/Voter.js";
-import Position from "../models/Position.js"; // Added import
-import Candidate from "../models/Candidate.js"; // Added import
-import Vote from "../models/Vote.js"; // Added import
-import Setting from "../models/Setting.js"; // Add this import
+import Vote from "../models/Vote.js";
+import Candidate from "../models/Candidate.js";
+import Position from "../models/Position.js";
 
 // Get election statistics
 export const getElectionStats = async (req, res) => {
@@ -105,27 +105,21 @@ export const getElectionStats = async (req, res) => {
 // Get election status
 export const getElectionStatus = async (req, res) => {
   try {
-    const election = await Election.findOne({ isActive: true });
+    // Add rate limiting by IP at the controller level
+    const clientIP = req.ip || req.connection.remoteAddress;
 
-    if (!election) {
-      return res.status(200).json({
-        isActive: false,
-        resultsPublished: false,
-      });
+    // Get current election
+    const currentElection = await Election.findOne({ isCurrent: true });
+    if (!currentElection) {
+      return res.status(404).json({ message: "No active election found" });
     }
 
-    // IMPORTANT: Get the settings to get the correct end date
+    // Get settings to check if election is active by date
     const settings = await Setting.findOne();
 
-    // When sending election status to the client, ensure we prioritize isActive
-    // over the stored status field for consistency
-    const effectiveStatus = election.isActive ? "active" : election.status;
-
-    // Try to parse dates in case they're in MM/DD/YYYY format
+    // Helper function to properly parse dates in different formats
     const parseDate = (dateString) => {
-      if (!dateString) return null;
-
-      if (dateString.includes("/")) {
+      if (dateString && dateString.includes("/")) {
         const parts = dateString.split("/");
         if (parts.length === 3) {
           const [month, day, year] = parts;
@@ -135,36 +129,59 @@ export const getElectionStatus = async (req, res) => {
       return dateString;
     };
 
-    // Use votingEndDate from settings if available
-    const startDate = parseDate(
-      election.startDate || settings?.votingStartDate || election.date
+    const now = new Date();
+    const startDate = settings?.startDate
+      ? new Date(settings.startDate)
+      : new Date(currentElection.startDate);
+    const endDate = settings?.endDate
+      ? new Date(settings.endDate)
+      : new Date(currentElection.endDate);
+
+    // Set the time components
+    startDate.setHours(
+      parseInt(settings?.startTime?.split(":")[0] || "8"),
+      parseInt(settings?.startTime?.split(":")[1] || "0"),
+      0
     );
-    const endDate = parseDate(
-      settings?.votingEndDate || election.endDate || election.date
+
+    endDate.setHours(
+      parseInt(settings?.endTime?.split(":")[0] || "17"),
+      parseInt(settings?.endTime?.split(":")[1] || "0"),
+      0
+    );
+
+    // Use the parseDate function for formatting dates from different sources
+    const formattedStartDate = parseDate(
+      currentElection.startDate ||
+        settings?.votingStartDate ||
+        currentElection.date
+    );
+
+    const formattedEndDate = parseDate(
+      settings?.votingEndDate || currentElection.endDate || currentElection.date
     );
 
     console.log("Sending election status data:", {
-      isActive: election.isActive,
-      status: effectiveStatus,
-      startDate,
-      endDate,
-      date: election.date,
-      startTime: election.startTime,
-      endTime: election.endTime,
-      // Debug info
+      isActive: currentElection.isActive,
+      status: currentElection.status,
+      startDate: formattedStartDate,
+      endDate: formattedEndDate,
+      date: currentElection.date,
+      startTime: currentElection.startTime,
+      endTime: currentElection.endTime,
       settingsStartDate: settings?.votingStartDate,
       settingsEndDate: settings?.votingEndDate,
     });
 
     res.status(200).json({
-      isActive: election.isActive,
-      status: effectiveStatus,
-      resultsPublished: election.resultsPublished || false,
-      startDate: startDate,
-      endDate: endDate,
-      date: election.date, // Keep the original date field as fallback
-      startTime: election.startTime,
-      endTime: election.endTime,
+      isActive: currentElection.isActive,
+      status: currentElection.status,
+      resultsPublished: currentElection.resultsPublished || false,
+      startDate: formattedStartDate,
+      endDate: formattedEndDate,
+      date: currentElection.date,
+      startTime: currentElection.startTime,
+      endTime: currentElection.endTime,
     });
   } catch (error) {
     console.error("Error getting election status:", error);

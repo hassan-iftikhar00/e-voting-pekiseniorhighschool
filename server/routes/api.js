@@ -167,6 +167,12 @@ router.put(
   checkPermission({ page: "positions", action: "edit" }),
   positionController.updatePosition
 );
+router.put(
+  "/positions/:id/order",
+  authenticateToken,
+  checkPermission({ page: "positions", action: "edit" }),
+  positionController.updatePositionOrder
+);
 router.delete(
   "/positions/:id",
   authenticateToken,

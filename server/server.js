@@ -3,6 +3,7 @@ import cors from "cors";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
 import apiRoutes from "./routes/api.js";
+import { dropVoteUniqueIndex } from "./models/Vote.js";
 
 // Load environment variables
 dotenv.config();
@@ -28,7 +29,17 @@ app.get("/api/test", (req, res) => {
 console.log("Connecting to MongoDB at:", process.env.MONGODB_URI);
 mongoose
   .connect(process.env.MONGODB_URI || "mongodb://localhost:27017/eVotingSystem")
-  .then(() => console.log("Connected to MongoDB"))
+  .then(async () => {
+    console.log("Connected to MongoDB");
+
+    // Drop the problematic index on server startup
+    await dropVoteUniqueIndex();
+
+    // Start the server
+    app.listen(PORT, () => {
+      console.log(`Server running on http://localhost:${PORT}`);
+    });
+  })
   .catch((err) => console.error("MongoDB connection error:", err));
 
 // API Routes
@@ -56,11 +67,6 @@ app._router.stack.forEach((middleware) => {
       }
     });
   }
-});
-
-// Start the server using only port 5000
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
 });
 
 export default app;

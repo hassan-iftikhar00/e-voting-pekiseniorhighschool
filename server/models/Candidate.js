@@ -42,6 +42,18 @@ const candidateSchema = new Schema(
       type: Boolean,
       default: true,
     },
+    voterCategory: {
+      type: {
+        type: String,
+        enum: ["all", "year", "class", "house"],
+        default: "all",
+      },
+      values: [
+        {
+          type: String,
+        },
+      ],
+    },
     createdAt: {
       type: Date,
       default: Date.now,
@@ -49,10 +61,22 @@ const candidateSchema = new Schema(
     position: {
       type: Schema.Types.ObjectId,
       ref: "Position",
-      required: true,
     },
   },
   { timestamps: true }
 );
+
+// Add indexes to improve query performance
+candidateSchema.index({ positionId: 1, electionId: 1, isActive: 1 });
+candidateSchema.index({ electionId: 1, isActive: 1 });
+
+// Make position field optional to fix compatibility issues
+candidateSchema.pre("save", function (next) {
+  // Default position to positionId if not set
+  if (!this.position && this.positionId) {
+    this.position = this.positionId;
+  }
+  next();
+});
 
 export default mongoose.model("Candidate", candidateSchema);

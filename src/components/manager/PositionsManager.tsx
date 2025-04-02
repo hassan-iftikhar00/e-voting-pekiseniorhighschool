@@ -29,6 +29,7 @@ interface Position {
   isActive: boolean;
   maxCandidates: number;
   maxSelections: number;
+  order?: number;
 }
 
 const PositionsManager: React.FC = () => {
@@ -42,7 +43,9 @@ const PositionsManager: React.FC = () => {
     type: "success" | "error";
     message: string;
   } | null>(null);
-  const [sortField, setSortField] = useState<"priority" | "title">("priority");
+  const [sortField, setSortField] = useState<"priority" | "title" | "order">(
+    "order"
+  );
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("asc");
   const [showColumnSelector, setShowColumnSelector] = useState(false);
   const columnSelectorRef = useRef<HTMLDivElement>(null);
@@ -58,6 +61,7 @@ const PositionsManager: React.FC = () => {
     maxCandidates: true,
     maxSelections: true,
     actions: true,
+    order: true,
   });
 
   // Form state
@@ -68,6 +72,7 @@ const PositionsManager: React.FC = () => {
     isActive: true,
     maxCandidates: 5,
     maxSelections: 1,
+    order: 1,
   });
 
   // Check user permissions once instead of using PermissionGuard everywhere
@@ -138,6 +143,10 @@ const PositionsManager: React.FC = () => {
         return sortDirection === "asc"
           ? a.title.localeCompare(b.title)
           : b.title.localeCompare(a.title);
+      } else if (sortField === "order") {
+        return sortDirection === "asc"
+          ? (a.order || 0) - (b.order || 0)
+          : (b.order || 0) - (a.order || 0);
       }
       return 0;
     });
@@ -176,6 +185,7 @@ const PositionsManager: React.FC = () => {
         isActive: true,
         maxCandidates: 5,
         maxSelections: 1,
+        order: Math.max(...positions.map((p) => p.order || 0), 0) + 1,
       });
 
       setShowAddForm(false);
@@ -279,12 +289,64 @@ const PositionsManager: React.FC = () => {
     }
   };
 
-  const handleSort = (field: "priority" | "title") => {
+  const handleSort = (field: "priority" | "title" | "order") => {
     if (sortField === field) {
       setSortDirection(sortDirection === "asc" ? "desc" : "asc");
     } else {
       setSortField(field);
       setSortDirection("asc");
+    }
+  };
+
+  const handleMovePosition = async (id: string, direction: "up" | "down") => {
+    // First check if the move is valid
+    const posIndex = positions.findIndex((p) => p._id === id);
+    if (
+      (direction === "up" && posIndex === 0) ||
+      (direction === "down" && posIndex === positions.length - 1)
+    ) {
+      return; // Cannot move first position up or last position down
+    }
+
+    try {
+      setIsLoading(true);
+
+      // Get authentication token
+      const token = localStorage.getItem("token");
+      const headers = {
+        "Content-Type": "application/json",
+        Authorization: token ? `Bearer ${token}` : "",
+      };
+
+      // Call the API endpoint to update position order
+      const response = await axios.put(
+        `${apiUrl}/api/positions/${id}/order`,
+        { direction },
+        { headers }
+      );
+
+      // Update positions with the new ordered list
+      if (response.data) {
+        setPositions(response.data);
+
+        // Ensure we're sorting by order after a move operation
+        setSortField("order");
+        setSortDirection("asc");
+      }
+
+      setNotification({
+        type: "success",
+        message: `Position moved ${direction} successfully`,
+      });
+    } catch (error) {
+      console.error(`Error moving position ${direction}:`, error);
+      setNotification({
+        type: "error",
+        message: `Failed to move position ${direction}`,
+      });
+    } finally {
+      setIsLoading(false);
+      setTimeout(() => setNotification(null), 3000);
     }
   };
 
@@ -531,6 +593,33 @@ const PositionsManager: React.FC = () => {
                 Number of candidates a voter can select for this position
               </p>
             </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Order
+              </label>
+              <input
+                type="number"
+                className="w-full p-2 border border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500"
+                value={
+                  editingPosition ? editingPosition.order : newPosition.order
+                }
+                onChange={(e) => {
+                  const value = parseInt(e.target.value) || 1;
+                  if (editingPosition) {
+                    setEditingPosition({
+                      ...editingPosition,
+                      order: value,
+                    });
+                  } else {
+                    setNewPosition({ ...newPosition, order: value });
+                  }
+                }}
+                min="1"
+              />
+              <p className="mt-1 text-xs text-gray-500">
+                Order determines the display sequence of positions
+              </p>
+            </div>
           </div>
 
           <div className="flex justify-end space-x-2">
@@ -704,6 +793,22 @@ const PositionsManager: React.FC = () => {
                       <label className="flex items-center">
                         <input
                           type="checkbox"
+                          checked={visibleColumns.order}
+                          onChange={() =>
+                            setVisibleColumns({
+                              ...visibleColumns,
+                              order: !visibleColumns.order,
+                            })
+                          }
+                          className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+                        />
+                        <span className="ml-2 text-sm text-gray-700">
+                          Order
+                        </span>
+                      </label>
+                      <label className="flex items-center">
+                        <input
+                          type="checkbox"
                           checked={visibleColumns.maxCandidates}
                           onChange={() =>
                             setVisibleColumns({
@@ -780,15 +885,21 @@ const PositionsManager: React.FC = () => {
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                {visibleColumns.priority && (
+                <th
+                  scope="col"
+                  className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-12"
+                >
+                  S/N
+                </th>
+                {visibleColumns.order && (
                   <th
                     scope="col"
-                    className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer"
-                    onClick={() => handleSort("priority")}
+                    className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider cursor-pointer w-24"
+                    onClick={() => handleSort("order")}
                   >
                     <div className="flex items-center">
-                      Priority
-                      {sortField === "priority" &&
+                      Order
+                      {sortField === "order" &&
                         (sortDirection === "asc" ? (
                           <ArrowUp className="h-4 w-4 ml-1 text-indigo-500" />
                         ) : (
@@ -822,14 +933,6 @@ const PositionsManager: React.FC = () => {
                     Description
                   </th>
                 )}
-                {visibleColumns.status && (
-                  <th
-                    scope="col"
-                    className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-                  >
-                    Status
-                  </th>
-                )}
                 {visibleColumns.maxCandidates && (
                   <th
                     scope="col"
@@ -846,25 +949,37 @@ const PositionsManager: React.FC = () => {
                     Max Selections
                   </th>
                 )}
-                {visibleColumns.actions && canEditPosition && (
+                {visibleColumns.status && (
                   <th
                     scope="col"
-                    className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider"
+                    className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
                   >
-                    Actions
+                    Status
                   </th>
                 )}
+                {visibleColumns.actions &&
+                  (canEditPosition || canDeletePosition) && (
+                    <th
+                      scope="col"
+                      className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider"
+                    >
+                      Actions
+                    </th>
+                  )}
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-100">
-              {filteredPositions.map((position) => (
+              {filteredPositions.map((position, index) => (
                 <tr
                   key={position._id}
                   className="hover:bg-indigo-50 transition-colors duration-150"
                 >
-                  {visibleColumns.priority && (
+                  <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-500">
+                    {index + 1}
+                  </td>
+                  {visibleColumns.order && (
                     <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {position.priority}
+                      {position.order}
                     </td>
                   )}
                   {visibleColumns.title && (
@@ -879,9 +994,19 @@ const PositionsManager: React.FC = () => {
                   )}
                   {visibleColumns.description && (
                     <td className="px-3 py-4">
-                      <div className="text-sm text-gray-500">
+                      <div className="text-sm text-gray-500 max-w-md">
                         {position.description || "-"}
                       </div>
+                    </td>
+                  )}
+                  {visibleColumns.maxCandidates && (
+                    <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {position.maxCandidates}
+                    </td>
+                  )}
+                  {visibleColumns.maxSelections && (
+                    <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {position.maxSelections}
                     </td>
                   )}
                   {visibleColumns.status && (
@@ -897,41 +1022,63 @@ const PositionsManager: React.FC = () => {
                       </span>
                     </td>
                   )}
-                  {visibleColumns.maxCandidates && (
-                    <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {position.maxCandidates}
-                    </td>
-                  )}
-                  {visibleColumns.maxSelections && (
-                    <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {position.maxSelections}
-                    </td>
-                  )}
-                  {visibleColumns.actions && canEditPosition && (
-                    <td className="px-3 py-4 whitespace-nowrap text-right text-sm">
-                      <div className="flex justify-end space-x-2">
-                        {canEditPosition && (
-                          <button
-                            onClick={() => setEditingPosition(position)}
-                            className="p-1.5 rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-100 transition-colors duration-200"
-                            title="Edit position"
-                          >
-                            <Edit className="h-4 w-4" />
-                          </button>
-                        )}
-
-                        {canDeletePosition && (
-                          <button
-                            onClick={() => handleDeletePosition(position._id)}
-                            className="p-1.5 rounded-md text-red-600 hover:text-red-900 hover:bg-red-100 transition-colors duration-200"
-                            title="Delete position"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        )}
-                      </div>
-                    </td>
-                  )}
+                  {visibleColumns.actions &&
+                    (canEditPosition || canDeletePosition) && (
+                      <td className="px-3 py-4 whitespace-nowrap text-right text-sm">
+                        <div className="flex justify-end space-x-2">
+                          {canEditPosition && (
+                            <>
+                              <button
+                                onClick={() =>
+                                  handleMovePosition(position._id, "up")
+                                }
+                                disabled={index === 0}
+                                className={`p-1.5 rounded-md ${
+                                  index === 0
+                                    ? "text-gray-300 cursor-not-allowed"
+                                    : "text-indigo-600 hover:text-indigo-900 hover:bg-indigo-100"
+                                } transition-colors duration-200`}
+                                title="Move up"
+                              >
+                                <ArrowUp className="h-4 w-4" />
+                              </button>
+                              <button
+                                onClick={() =>
+                                  handleMovePosition(position._id, "down")
+                                }
+                                disabled={
+                                  index === filteredPositions.length - 1
+                                }
+                                className={`p-1.5 rounded-md ${
+                                  index === filteredPositions.length - 1
+                                    ? "text-gray-300 cursor-not-allowed"
+                                    : "text-indigo-600 hover:text-indigo-900 hover:bg-indigo-100"
+                                } transition-colors duration-200`}
+                                title="Move down"
+                              >
+                                <ArrowDown className="h-4 w-4" />
+                              </button>
+                              <button
+                                onClick={() => setEditingPosition(position)}
+                                className="p-1.5 rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-100 transition-colors duration-200"
+                                title="Edit position"
+                              >
+                                <Edit className="h-4 w-4" />
+                              </button>
+                            </>
+                          )}
+                          {canDeletePosition && (
+                            <button
+                              onClick={() => handleDeletePosition(position._id)}
+                              className="p-1.5 rounded-md text-red-600 hover:text-red-900 hover:bg-red-100 transition-colors duration-200"
+                              title="Delete position"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    )}
                 </tr>
               ))}
             </tbody>

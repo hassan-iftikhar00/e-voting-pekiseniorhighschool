@@ -4,8 +4,17 @@ import React, {
   useState,
   useEffect,
   ReactNode,
+  useRef,
 } from "react";
-import axios from "axios"; // Add axios import
+import axios from "axios";
+
+// Add a debug flag that can be toggled
+const DEBUG = process.env.NODE_ENV === "development" && false; // Set to true to see debug logs in development
+
+// Helper function to conditionally log based on debug mode
+const debugLog = (...args: any[]) => {
+  if (DEBUG) console.log(...args);
+};
 
 interface ElectionStats {
   totalVoters: number;
@@ -87,20 +96,57 @@ export const ElectionProvider: React.FC<{ children: ReactNode }> = ({
   const [error, setError] = useState<string | null>(null);
   const [targetTime, setTargetTime] = useState<Date | null>(null);
   const [useFallbackData, setUseFallbackData] = useState(false);
+  const [lastFetchTime, setLastFetchTime] = useState<number>(0);
+  const [lastDataHash, setLastDataHash] = useState<string>("");
+  const [pollingInterval, setPollingInterval] = useState<number>(10000); // Start with 10s
+  const intervalIdRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Helper function to create a simple hash of the data
+  const createDataHash = (data: any): string => {
+    return JSON.stringify({
+      totalVoters: data.totalVoters,
+      votedCount: data.votedCount,
+      completionPercentage: data.completionPercentage,
+    });
+  };
 
   // Fetch election stats from API with better error handling
   const fetchElectionStats = async () => {
+    // More aggressive throttling - 5 seconds between requests
+    const now = Date.now();
+    if (now - lastFetchTime < 5000) {
+      debugLog("Throttling: Skipping request, too soon after last fetch");
+      return;
+    }
+
+    setLastFetchTime(now);
+
     try {
-      console.log(
-        `Fetching election stats from ${API_BASE_URL}/api/elections/stats`
-      );
+      debugLog("Fetching election stats");
       const response = await fetch(`${API_BASE_URL}/api/elections/stats`);
 
-      const data = await response.json();
-      console.log("Received election stats:", data);
+      if (!response.ok) {
+        throw new Error(`Failed to fetch stats: ${response.status}`);
+      }
 
-      // Only set stats if we have voter data
-      if (data.totalVoters > 0 || !data.message) {
+      const data = await response.json();
+
+      // Create a hash of the received data
+      const dataHash = createDataHash(data);
+
+      // Check if data has actually changed
+      if (dataHash === lastDataHash) {
+        debugLog("Data unchanged, may reduce polling frequency");
+        // Optionally increase polling interval if data is static
+        if (pollingInterval < 30000) {
+          // Cap at 30 seconds
+          setPollingInterval((prev) => Math.min(prev * 1.5, 30000));
+        }
+      } else {
+        // Data has changed, reset to faster polling
+        setPollingInterval(10000);
+        setLastDataHash(dataHash);
+
         // Transform dates in recentVoters
         const transformedData = {
           ...data,
@@ -111,11 +157,11 @@ export const ElectionProvider: React.FC<{ children: ReactNode }> = ({
         };
 
         setStats(transformedData);
+        debugLog("Updated stats with new data");
       }
     } catch (err: any) {
-      console.error("Error fetching election stats:", err);
+      console.error("Error fetching election stats:", err); // Keep error logs
       setError(err.message);
-      // Switch to fallback data if we haven't already
       if (!useFallbackData) {
         setUseFallbackData(true);
       }
@@ -138,7 +184,7 @@ export const ElectionProvider: React.FC<{ children: ReactNode }> = ({
         data.isActive ? "active" : data.status || "not-started"
       );
     } catch (error) {
-      console.error("Error fetching election status:", error);
+      console.error("Error fetching election status:", error); // Keep error logs
       // Set a default value instead of null
       setElectionStatus("not-started");
     } finally {
@@ -146,7 +192,7 @@ export const ElectionProvider: React.FC<{ children: ReactNode }> = ({
     }
   };
 
-  // Initial fetch of election data with fallback handling
+  // Initial fetch of election data
   useEffect(() => {
     const fetchData = async () => {
       setLoading(true);
@@ -154,62 +200,8 @@ export const ElectionProvider: React.FC<{ children: ReactNode }> = ({
         await fetchElectionStatus();
         await fetchElectionStats();
       } catch (err) {
-        console.error("API unavailable, switching to fallback data", err);
-        setUseFallbackData(true);
-
-        // Set demo/fallback data
-        setStats({
-          totalVoters: 592,
-          votedCount: 458,
-          remainingVoters: 134,
-          completionPercentage: 77,
-          recentVoters: [
-            {
-              id: "voter-1",
-              name: "Voter 871",
-              voterId: "VOTER6869",
-              votedAt: new Date(),
-            },
-            {
-              id: "voter-2",
-              name: "Voter 882",
-              voterId: "VOTER4497",
-              votedAt: new Date(Date.now() - 30000),
-            },
-            {
-              id: "voter-3",
-              name: "Voter 319",
-              voterId: "VOTER6207",
-              votedAt: new Date(Date.now() - 60000),
-            },
-          ],
-          votingActivity: {
-            year: {
-              labels: ["2023", "2024", "2025"],
-              data: [120, 180, 160],
-            },
-            class: {
-              labels: ["Form 3A", "Form 3B", "Form 3C", "Form 3D"],
-              data: [210, 170, 140, 90],
-            },
-            house: {
-              labels: [
-                "Red House",
-                "Blue House",
-                "Green House",
-                "Yellow House",
-              ],
-              data: [150, 190, 130, 170],
-            },
-          },
-        });
-
-        setElectionStatus("active");
-
-        // Set a target time 30 minutes from now
-        const end = new Date();
-        end.setMinutes(end.getMinutes() + 30);
-        setTargetTime(end);
+        console.error("API error:", err);
+        setError("Unable to fetch election data. Please try again later.");
       } finally {
         setLoading(false);
       }
@@ -251,16 +243,40 @@ export const ElectionProvider: React.FC<{ children: ReactNode }> = ({
     return () => clearInterval(timer);
   }, [targetTime]);
 
-  // Update stats periodically during active election
+  // Update stats periodically during active election - with improved polling logic
   useEffect(() => {
-    if (electionStatus !== "active") return;
+    // First, clean up any existing interval
+    if (intervalIdRef.current) {
+      clearInterval(intervalIdRef.current);
+      intervalIdRef.current = null;
+    }
 
-    const interval = setInterval(() => {
+    // Only set up polling if election is active
+    if (electionStatus !== "active") {
+      debugLog("Election not active, polling disabled");
+      return;
+    }
+
+    debugLog(`Setting up polling interval: ${pollingInterval}ms`);
+
+    // Initial fetch immediately
+    fetchElectionStats();
+
+    // Set up new interval with the current polling rate
+    intervalIdRef.current = setInterval(() => {
+      debugLog("Polling for stats");
       fetchElectionStats();
-    }, 10000); // Every 10 seconds
+    }, pollingInterval);
 
-    return () => clearInterval(interval);
-  }, [electionStatus]);
+    // Clean up function
+    return () => {
+      debugLog("Cleaning up polling interval");
+      if (intervalIdRef.current) {
+        clearInterval(intervalIdRef.current);
+        intervalIdRef.current = null;
+      }
+    };
+  }, [electionStatus, pollingInterval]); // Re-run when election status or polling interval changes
 
   // Demo mode logic
   useEffect(() => {

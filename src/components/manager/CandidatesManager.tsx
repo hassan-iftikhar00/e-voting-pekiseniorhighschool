@@ -989,7 +989,7 @@ const CandidatesManager: React.FC = () => {
                   value={
                     editingCandidate
                       ? editingCandidate.voterCategory?.type || "all"
-                      : "all"
+                      : newCandidate.voterCategory?.type || "all"
                   }
                   onChange={(e) => {
                     const type = e.target.value as VoterCategory["type"];
@@ -1012,8 +1012,11 @@ const CandidatesManager: React.FC = () => {
                   <option value="house">Specific Hall/House</option>
                 </select>
 
-                {(editingCandidate?.voterCategory?.type !== "all" ||
-                  newCandidate.voterCategory?.type !== "all") && (
+                {/* Fix the conditional rendering here to check the correct state */}
+                {((editingCandidate &&
+                  editingCandidate.voterCategory?.type !== "all") ||
+                  (!editingCandidate &&
+                    newCandidate.voterCategory?.type !== "all")) && (
                   <div className="space-y-2">
                     <div className="text-sm font-medium text-gray-700">
                       Select{" "}

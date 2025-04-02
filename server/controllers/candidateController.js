@@ -32,7 +32,10 @@ export const createCandidate = async (req, res) => {
       class: className,
       house,
       isActive,
+      voterCategory, // Make sure to include this in the destructuring
     } = req.body;
+
+    console.log("Received candidate data:", req.body);
 
     if (!name || !positionId) {
       return res
@@ -62,6 +65,7 @@ export const createCandidate = async (req, res) => {
       class: className || "",
       house: house || "",
       isActive: isActive === undefined ? true : isActive,
+      voterCategory: voterCategory || { type: "all", values: [] }, // Ensure voterCategory is saved
     });
 
     await candidate.save();
@@ -84,6 +88,7 @@ export const updateCandidate = async (req, res) => {
       class: className,
       house,
       isActive,
+      voterCategory, // Include voterCategory in the destructuring
     } = req.body;
 
     if (!name || !positionId) {
@@ -113,6 +118,8 @@ export const updateCandidate = async (req, res) => {
     candidate.class = className !== undefined ? className : candidate.class;
     candidate.house = house !== undefined ? house : candidate.house;
     candidate.isActive = isActive !== undefined ? isActive : candidate.isActive;
+    candidate.voterCategory =
+      voterCategory !== undefined ? voterCategory : candidate.voterCategory;
 
     await candidate.save();
     res.status(200).json(candidate);
@@ -139,7 +146,7 @@ export const deleteCandidate = async (req, res) => {
   }
 };
 
-// Get all candidates grouped by position
+// Get candidates by position for the voting panel
 export const getCandidatesByPosition = async (req, res) => {
   try {
     // Get current election
@@ -148,40 +155,50 @@ export const getCandidatesByPosition = async (req, res) => {
       return res.status(404).json({ message: "No active election found" });
     }
 
-    // Get all positions
-    const positions = await Position.find({ isActive: true });
+    // Get all active positions, sorted by order
+    const positions = await Position.find({
+      electionId: currentElection._id,
+      isActive: true,
+    }).sort({ order: 1 });
 
-    // Create an object to store candidates by position name
+    // Get all active candidates for this election
+    const candidates = await Candidate.find({
+      electionId: currentElection._id,
+      isActive: true,
+    });
+
+    // Group candidates by position
     const candidatesByPosition = {};
 
-    // For each position, find its candidates
     for (const position of positions) {
-      const candidates = await Candidate.find({
-        positionId: position._id,
-        electionId: currentElection._id,
-        isActive: true,
+      // Find candidates for this position
+      const positionCandidates = candidates.filter(
+        (c) => c.positionId.toString() === position._id.toString()
+      );
+
+      // Attach position info to each candidate
+      const candidatesWithInfo = positionCandidates.map((c) => {
+        // Convert to plain object to allow adding properties
+        const candidateObj = c.toObject();
+        candidateObj.positionInfo = {
+          title: position.title,
+          order: position.order,
+          maxSelections: position.maxSelections,
+        };
+        return candidateObj;
       });
 
-      // Map candidates to a format expected by the frontend
-      const mappedCandidates = candidates.map((candidate) => ({
-        id: candidate._id,
-        name: candidate.name,
-        imageUrl: candidate.image,
-        bio: candidate.biography,
-        position: position.name,
-      }));
-
-      // Only add positions that have candidates
-      if (mappedCandidates.length > 0) {
-        candidatesByPosition[position.name] = mappedCandidates;
+      // Only include positions that have candidates
+      if (candidatesWithInfo.length > 0) {
+        candidatesByPosition[position.title] = candidatesWithInfo;
       }
     }
 
-    res.status(200).json(candidatesByPosition);
+    return res.status(200).json(candidatesByPosition);
   } catch (error) {
-    console.error("Error fetching candidates by position:", error);
-    res
+    console.error("Error getting candidates by position:", error);
+    return res
       .status(500)
-      .json({ message: "Failed to fetch candidates", error: error.message });
+      .json({ message: "Server error", error: error.message });
   }
 };

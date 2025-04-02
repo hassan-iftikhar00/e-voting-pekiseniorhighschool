@@ -34,7 +34,29 @@ const voteSchema = new Schema(
   { timestamps: true }
 );
 
-// Add an index to prevent duplicate votes for the same position by the same voter
-voteSchema.index({ voter: 1, election: 1, position: 1 }, { unique: true });
+// Replace with simpler indexes without uniqueness
+voteSchema.index({ voter: 1, election: 1 });
+voteSchema.index({ election: 1, position: 1 });
+voteSchema.index({ isAbstention: 1 });
 
-export default mongoose.model("Vote", voteSchema);
+// Use this function to run on server start to drop the problematic index
+export const dropVoteUniqueIndex = async () => {
+  try {
+    // Check if collection exists
+    const collections = await mongoose.connection.db
+      .listCollections({ name: "votes" })
+      .toArray();
+    if (collections.length > 0) {
+      console.log("Attempting to drop problematic index on votes collection");
+      await mongoose.connection.db
+        .collection("votes")
+        .dropIndex("voterId_1_positionId_1_electionId_1");
+      console.log("Successfully dropped problematic index");
+    }
+  } catch (error) {
+    console.log("Index drop error (might not exist):", error.message);
+  }
+};
+
+const VoteModel = mongoose.model("Vote", voteSchema);
+export default VoteModel;

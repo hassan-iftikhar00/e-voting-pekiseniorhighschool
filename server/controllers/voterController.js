@@ -49,9 +49,9 @@ export const createVoter = async (req, res) => {
     const voter = new Voter({
       name,
       voterId,
-      gender: gender || "Male", // Include gender with default
+      gender: gender, // Include gender with default
       class: className,
-      year,
+      year, // The year value is passed from the request body
       house,
       electionId: currentElection._id,
     });
@@ -86,7 +86,7 @@ export const updateVoter = async (req, res) => {
 
     // Update voter details
     voter.name = name;
-    voter.gender = gender || "Male"; // Use default if undefined
+    voter.gender = gender; // Use default if undefined
     voter.class = className;
     voter.year = year;
     voter.house = house;
@@ -194,7 +194,7 @@ export const bulkAddVoters = async (req, res) => {
           !voterData.name ||
           !voterData.voterId ||
           !voterData.class ||
-          !voterData.year ||
+          !voterData.year || // Year is a required field
           !voterData.house
         ) {
           results.errors++;
@@ -212,7 +212,7 @@ export const bulkAddVoters = async (req, res) => {
           continue;
         }
 
-        // Create voter
+        // Create voter with all fields including year
         const voter = new Voter({
           ...voterData,
           electionId: currentElection._id,

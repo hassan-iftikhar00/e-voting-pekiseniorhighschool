@@ -8,6 +8,12 @@ import React, {
 import axios from "axios";
 import { initializeAfterLogin } from "../utils/dbInitializer";
 
+// Define the Permission type
+interface Permission {
+  page: string;
+  actions: string[];
+}
+
 interface Voter {
   id: string;
   name: string;
@@ -16,23 +22,22 @@ interface Voter {
   votedAt?: Date;
 }
 
-interface Role {
-  id?: string;
-  name: string;
-  permissions?: Record<string, string[]>;
-}
-
+// Update the User interface to include the 'name' property
 interface User {
   _id: string;
   id?: string; // Add id property which is sometimes used instead of _id
   username: string;
   email?: string;
-  role?: Role | string;
-  isActive?: boolean;
-  permissions?: Array<{
-    resource: string;
-    [key: string]: any; // Allow any permission action
-  }>;
+  role: string | { name: string; permissions: Permission[] };
+  name?: string; // Add the name property as optional
+  isAdmin?: boolean;
+  permissions?: Permission[];
+}
+
+interface Role {
+  id?: string;
+  name: string;
+  permissions?: Record<string, string[]>;
 }
 
 interface UserContextType {
@@ -178,14 +183,17 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({
       return true;
     }
 
-    // For other roles, check specific permissions
-    if (user.permissions && Array.isArray(user.permissions)) {
-      return user.permissions.some(
-        (permission) => permission.resource === resource && permission[action]
-      );
-    }
+    // Check user permissions
+    const userPermissions =
+      user.permissions ||
+      (typeof user.role === "object" ? user.role.permissions : []);
 
-    return false;
+    if (!userPermissions) return false;
+
+    const pagePermission = userPermissions.find((p) => p.page === resource);
+    if (!pagePermission) return false;
+
+    return pagePermission.actions.includes(action);
   };
 
   const refreshUserData = async () => {

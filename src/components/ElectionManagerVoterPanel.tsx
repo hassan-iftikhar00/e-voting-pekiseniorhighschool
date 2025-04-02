@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import {
   Routes,
   Route,
@@ -152,69 +152,95 @@ const ElectionManager: React.FC = () => {
     }
   };
 
-  const updateTimeRemaining = () => {
-    if (!currentElection) return;
+  const updateTimeRemaining = useCallback(() => {
+    if (!currentElection) {
+      setTimeRemaining("Loading...");
+      return;
+    }
 
     const now = new Date();
     let targetDate;
 
-    if (currentElection.isActive) {
-      const dateStr = currentElection.endDate || currentElection.date;
-      const [year, month, day] = dateStr.split("-").map(Number);
-      const [hours, minutes] = (currentElection.endTime || "17:00")
-        .split(":")
-        .map(Number);
-      targetDate = new Date(year, month - 1, day, hours, minutes);
-    } else {
-      const dateStr = currentElection.startDate || currentElection.date;
-      const [year, month, day] = dateStr.split("-").map(Number);
-      const [hours, minutes] = (currentElection.startTime || "08:00")
-        .split(":")
-        .map(Number);
-      targetDate = new Date(year, month - 1, day, hours, minutes);
-    }
-
-    const difference = targetDate.getTime() - now.getTime();
-
-    if (difference <= 0) {
+    try {
       if (currentElection.isActive) {
-        setElectionStatus("ended");
-        setTimeRemaining("Election has ended");
+        // If election is active, calculate time until it ends
+        const dateStr = currentElection.endDate || currentElection.date;
+        const [year, month, day] = dateStr.split("-").map(Number);
+        const [hours, minutes] = (currentElection.endTime || "17:00")
+          .split(":")
+          .map(Number);
+        targetDate = new Date(year, month - 1, day, hours, minutes);
+
+        if (targetDate <= now) {
+          setTimeRemaining("Election has ended");
+          setElectionStatus("ended");
+          return;
+        }
       } else {
-        setElectionStatus("not-started");
-        setTimeRemaining("Election start date has passed");
+        // If election is not active, calculate time until it starts
+        const dateStr = currentElection.startDate || currentElection.date;
+        const [year, month, day] = dateStr.split("-").map(Number);
+        const [hours, minutes] = (currentElection.startTime || "08:00")
+          .split(":")
+          .map(Number);
+        targetDate = new Date(year, month - 1, day, hours, minutes);
+
+        if (targetDate <= now) {
+          setTimeRemaining("Election start time has passed");
+          return;
+        }
       }
-      return;
+
+      // Calculate time difference in milliseconds
+      const difference = targetDate.getTime() - now.getTime();
+
+      if (difference <= 0) {
+        if (currentElection.isActive) {
+          setTimeRemaining("Election has ended");
+          setElectionStatus("ended");
+        } else {
+          setTimeRemaining("Election start time has passed");
+        }
+        return;
+      }
+
+      // Convert milliseconds to days, hours, minutes, seconds
+      const days = Math.floor(difference / (1000 * 60 * 60 * 24));
+      const hours = Math.floor(
+        (difference % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)
+      );
+      const minutes = Math.floor((difference % (1000 * 60 * 60)) / (1000 * 60));
+      const seconds = Math.floor((difference % (1000 * 60)) / 1000);
+
+      // Format time string
+      let timeString = "";
+      if (days > 0) timeString += `${days}d `;
+      if (hours > 0) timeString += `${hours}h `;
+      if (minutes > 0) timeString += `${minutes}m `;
+      timeString += `${seconds}s`;
+
+      setElectionStatus(currentElection.isActive ? "active" : "not-started");
+      setTimeRemaining(timeString); // Make sure we're setting the time
+    } catch (error) {
+      console.error("Error calculating time remaining:", error);
+      setTimeRemaining("Time calculation error");
     }
-
-    const days = Math.floor(difference / (1000 * 60 * 60 * 24));
-    const hours = Math.floor(
-      (difference % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)
-    );
-    const minutes = Math.floor((difference % (1000 * 60 * 60)) / (1000 * 60));
-    const seconds = Math.floor((difference % (1000 * 60)) / 1000);
-
-    let timeString = "";
-    if (days > 0) timeString += `${days}d `;
-    if (hours > 0) timeString += `${hours}h `;
-    if (minutes > 0) timeString += `${minutes}m `;
-    timeString += `${seconds}s`;
-
-    setElectionStatus(currentElection.isActive ? "active" : "not-started");
-    setTimeRemaining(timeString);
-  };
+  }, [currentElection]);
 
   useEffect(() => {
     fetchCurrentElection();
 
+    // Call immediately to avoid delay in displaying the time
+    if (currentElection) {
+      updateTimeRemaining();
+    }
+
     const timer = setInterval(() => {
-      if (currentElection) {
-        updateTimeRemaining();
-      }
+      updateTimeRemaining();
     }, 1000);
 
     return () => clearInterval(timer);
-  }, []);
+  }, [currentElection, updateTimeRemaining]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -436,26 +462,22 @@ const ElectionManager: React.FC = () => {
                   </span>
                 </div>
                 <div
-                  className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg text-sm font-bold ${
-                    !currentElection
-                      ? "bg-gray-100 text-gray-600"
-                      : currentElection.isActive
-                      ? "bg-green-100 text-green-800"
-                      : "bg-yellow-100 text-yellow-800"
+                  className={`rounded-lg px-3 py-1.5 text-sm font-medium ${
+                    currentElection?.isActive
+                      ? "bg-green-500 text-white"
+                      : "bg-yellow-300 text-black"
                   }`}
                 >
-                  <Clock className="h-4 w-4" />
-                  <span>
-                    {!currentElection
-                      ? "Loading..."
-                      : currentElection.isActive
-                      ? `Election in progress${
-                          timeRemaining !== "Election has ended"
-                            ? ` • Ends in: ${timeRemaining}`
-                            : ""
-                        }`
-                      : `Election starts in: ${timeRemaining}`}
-                  </span>
+                  <div className="flex items-center">
+                    <Clock className="h-4 w-4 mr-2" />
+                    {currentElection?.isActive ? (
+                      <span>
+                        Election in progress • Ends in: {timeRemaining}
+                      </span>
+                    ) : (
+                      <span>Election starts in: {timeRemaining}</span>
+                    )}
+                  </div>
                 </div>
                 <div className="relative" ref={profileMenuRef}>
                   <button

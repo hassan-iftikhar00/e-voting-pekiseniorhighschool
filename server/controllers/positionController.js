@@ -11,7 +11,7 @@ export const getAllPositions = async (req, res) => {
 
     const positions = await Position.find({
       electionId: currentElection._id,
-    }).sort({ priority: 1 });
+    }).sort({ order: 1 }); // Sort by order instead of priority
 
     res.status(200).json(positions);
   } catch (error) {
@@ -28,6 +28,7 @@ export const createPosition = async (req, res) => {
       maxCandidates,
       maxSelections,
       priority,
+      order,
       isActive,
     } = req.body;
 
@@ -53,6 +54,15 @@ export const createPosition = async (req, res) => {
         .json({ message: "Position already exists for this election" });
     }
 
+    // If no specific order is provided, place at the end
+    let positionOrder = order;
+    if (positionOrder === undefined) {
+      const lastPosition = await Position.findOne({
+        electionId: currentElection._id,
+      }).sort({ order: -1 });
+      positionOrder = lastPosition ? lastPosition.order + 1 : 1;
+    }
+
     const position = new Position({
       title,
       description: description || "",
@@ -60,6 +70,7 @@ export const createPosition = async (req, res) => {
       maxCandidates: maxCandidates || 1,
       maxSelections: maxSelections || 1,
       priority: priority || 0,
+      order: positionOrder,
       isActive: isActive === undefined ? true : isActive,
     });
 
@@ -80,6 +91,7 @@ export const updatePosition = async (req, res) => {
       maxCandidates,
       maxSelections,
       priority,
+      order,
       isActive,
     } = req.body;
 
@@ -115,6 +127,7 @@ export const updatePosition = async (req, res) => {
     position.maxCandidates = maxCandidates || position.maxCandidates;
     position.maxSelections = maxSelections || position.maxSelections;
     position.priority = priority !== undefined ? priority : position.priority;
+    position.order = order !== undefined ? order : position.order;
     position.isActive = isActive !== undefined ? isActive : position.isActive;
 
     await position.save();
@@ -142,6 +155,56 @@ export const deletePosition = async (req, res) => {
   }
 };
 
+// New endpoint to update position order
+export const updatePositionOrder = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { direction } = req.body;
+
+    if (!["up", "down"].includes(direction)) {
+      return res
+        .status(400)
+        .json({ message: "Direction must be 'up' or 'down'" });
+    }
+
+    // Get the current position
+    const position = await Position.findById(id);
+    if (!position) {
+      return res.status(404).json({ message: "Position not found" });
+    }
+
+    // Find the adjacent position based on direction
+    const adjacentPosition = await Position.findOne({
+      electionId: position.electionId,
+      order: direction === "up" ? position.order - 1 : position.order + 1,
+    });
+
+    if (!adjacentPosition) {
+      return res.status(400).json({
+        message: `Cannot move position ${direction}. No adjacent position found.`,
+      });
+    }
+
+    // Swap the order values
+    const tempOrder = position.order;
+    position.order = adjacentPosition.order;
+    adjacentPosition.order = tempOrder;
+
+    // Save both positions
+    await position.save();
+    await adjacentPosition.save();
+
+    // Get all positions with updated order
+    const positions = await Position.find({
+      electionId: position.electionId,
+    }).sort({ order: 1 });
+
+    res.status(200).json(positions);
+  } catch (error) {
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
 // Seed initial positions
 export const seedDefaultPositions = async (req, res) => {
   try {
@@ -160,42 +223,48 @@ export const seedDefaultPositions = async (req, res) => {
         .json({ message: "Positions already exist for this election" });
     }
 
-    // Default positions
+    // Default positions with order field
     const defaultPositions = [
       {
         title: "School Prefect",
         description: "School leader",
         priority: 1,
+        order: 1,
         maxCandidates: 2,
       },
       {
         title: "Assistant School Prefect",
         description: "Assistant to the school leader",
         priority: 2,
+        order: 2,
         maxCandidates: 2,
       },
       {
         title: "Academic Prefect",
         description: "Responsible for academic affairs",
         priority: 3,
+        order: 3,
         maxCandidates: 2,
       },
       {
         title: "Sports Prefect",
         description: "Leads sports activities",
         priority: 4,
+        order: 4,
         maxCandidates: 2,
       },
       {
         title: "Entertainment Prefect",
         description: "Organizes entertainment events",
         priority: 5,
+        order: 5,
         maxCandidates: 2,
       },
       {
         title: "Health Prefect",
         description: "Oversees health related matters",
         priority: 6,
+        order: 6,
         maxCandidates: 2,
       },
     ];

@@ -511,7 +511,7 @@ const VotingAuth: React.FC = () => {
           <div className="flex items-center">
             <Clock className="h-4 w-4 mr-2" />
             {currentElection?.isActive ? (
-              <span>Election ends in: {timeRemaining}</span>
+              <span>Election in progress • Ends in: {timeRemaining}</span>
             ) : (
               <span>Election starts in: {timeRemaining}</span>
             )}
@@ -752,7 +752,9 @@ const VotingAuth: React.FC = () => {
                   <div className="flex items-center">
                     <Clock className="h-4 w-4 mr-2" />
                     {currentElection?.isActive ? (
-                      <span>Election ends in: {timeRemaining}</span>
+                      <span>
+                        Election in progress • Ends in: {timeRemaining}
+                      </span>
                     ) : (
                       <span>Election starts in: {timeRemaining}</span>
                     )}

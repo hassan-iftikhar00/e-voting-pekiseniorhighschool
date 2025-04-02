@@ -343,15 +343,15 @@ const Dashboard: React.FC = () => {
             </div>
           </div>
           <div className="mt-6 grid grid-cols-3 gap-4">
-            <div className="flex items-center">
+            <div className="flex items-center" key="voted-legend">
               <div className="w-3 h-3 rounded-full bg-blue-500 mr-2" />
               <span className="text-sm text-gray-600">Voted</span>
             </div>
-            <div className="flex items-center">
+            <div className="flex items-center" key="remaining-legend">
               <div className="w-3 h-3 rounded-full bg-gray-300 mr-2" />
               <span className="text-sm text-gray-600">Remaining</span>
             </div>
-            <div className="flex items-center">
+            <div className="flex items-center" key="in-progress-legend">
               <div className="w-3 h-3 rounded-full bg-orange-500 mr-2" />
               <span className="text-sm text-gray-600">In Progress</span>
             </div>
