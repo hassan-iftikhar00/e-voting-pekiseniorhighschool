@@ -416,33 +416,33 @@ const ConfirmVote: React.FC = () => {
             </div>
 
             {!success && (
-              <div className="bg-gray-50 p-6 border-t border-gray-200 flex justify-between items-center">
-                <button
-                  onClick={handleGoBack}
-                  className="bg-yellow-400 text-black hover:bg-yellow-300 font-medium py-2.5 px-5 rounded-lg inline-flex items-center transition-colors duration-300 font-sans shadow-sm"
-                  disabled={loading}
-                >
-                  <ArrowLeft className="mr-2" size={18} />
-                  Back to Selection
-                </button>
-                <button
-                  onClick={handleSubmitVote}
-                  disabled={loading}
-                  className="bg-gradient-to-r from-green-600 to-green-500 hover:from-green-700 hover:to-green-600 text-white font-medium py-2.5 px-6 rounded-lg inline-flex items-center shadow-md hover:shadow-lg transition-all duration-300 font-sans tracking-wide"
-                >
-                  {loading ? (
-                    <>
-                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
-                      Processing...
-                    </>
-                  ) : (
-                    <>
-                      Submit Vote
-                      <ChevronRight className="ml-2" size={18} />
-                    </>
-                  )}
-                </button>
-              </div>
+              <div className="bg-gray-50 p-6 border-t border-gray-200 flex flex-col sm:flex-row justify-between items-center gap-4 sm:gap-0">
+              <button
+                onClick={handleGoBack}
+                className="bg-yellow-400 text-black hover:bg-yellow-300 font-medium py-2 px-4 sm:py-2.5 sm:px-5 rounded-lg inline-flex items-center transition-colors duration-300 font-sans shadow-sm w-full sm:w-auto"
+                disabled={loading}
+              >
+                <ArrowLeft className="mr-2" size={18} />
+                Back to Selection
+              </button>
+              <button
+                onClick={handleSubmitVote}
+                disabled={loading}
+                className="bg-gradient-to-r from-green-600 to-green-500 hover:from-green-700 hover:to-green-600 text-white font-medium py-2 px-4 sm:py-2.5 sm:px-6 rounded-lg inline-flex items-center shadow-md hover:shadow-lg transition-all duration-300 font-sans tracking-wide w-full sm:w-auto"
+              >
+                {loading ? (
+                  <>
+                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
+                    Processing...
+                  </>
+                ) : (
+                  <>
+                    Submit Vote
+                    <ChevronRight className="ml-2" size={18} />
+                  </>
+                )}
+              </button>
+            </div>
             )}
           </div>
 

@@ -397,10 +397,10 @@ const VoteSuccess: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-indigo-800 py-12 flex items-center justify-center">
+    <div className="min-h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-indigo-800 flex items-center justify-center">
       <div className="max-w-md w-full bg-white rounded-lg shadow-xl overflow-hidden">
         <div className="bg-indigo-600 h-2"></div>
-
+  
         <div className="p-8">
           <div className="text-center">
             <div className="mx-auto h-16 w-16 bg-green-100 rounded-full flex items-center justify-center mb-6">
@@ -413,7 +413,7 @@ const VoteSuccess: React.FC = () => {
               Your vote has been successfully recorded.
             </p>
           </div>
-
+  
           <div className="bg-gray-50 rounded-lg p-6 mb-6 border border-gray-200">
             <div className="flex justify-between mb-2">
               <span className="text-gray-500">School:</span>
@@ -446,12 +446,12 @@ const VoteSuccess: React.FC = () => {
               </span>
             </div>
           </div>
-
+  
           <div className="text-center text-sm text-gray-500 mb-6">
             <p>Keep your vote token as proof of your participation.</p>
             <p>Your vote is anonymous and cannot be linked back to you.</p>
           </div>
-
+  
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <button
               onClick={handleDownloadReceipt}
@@ -460,7 +460,7 @@ const VoteSuccess: React.FC = () => {
               <Download className="h-4 w-4 mr-2" />
               Download Receipt
             </button>
-
+  
             <button
               onClick={handlePrint}
               className="flex items-center justify-center px-4 py-2 border border-indigo-300 shadow-sm text-sm font-medium rounded-md text-indigo-700 bg-indigo-50 hover:bg-indigo-100"
@@ -469,7 +469,7 @@ const VoteSuccess: React.FC = () => {
               Print Receipt
             </button>
           </div>
-
+  
           <button
             onClick={handleLogout}
             className="mt-4 flex items-center justify-center w-full px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700"
@@ -477,7 +477,7 @@ const VoteSuccess: React.FC = () => {
             <LogOut className="h-4 w-4 mr-2" />
             Finish
           </button>
-
+  
           {settings.resultsPublished && (
             <button
               onClick={handleViewResults}
