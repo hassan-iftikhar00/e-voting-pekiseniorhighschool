@@ -294,20 +294,20 @@ const ConfirmVote: React.FC = () => {
       <div className="pt-20 pb-12 relative z-10 flex-1 flex items-center justify-center">
         <div className="max-w-3xl w-full px-4 sm:px-6 lg:px-8">
           <div className="bg-white shadow-lg rounded-lg overflow-hidden">
-            <div className="bg-gradient-to-r from-indigo-100 to-indigo-50 p-6 flex justify-between items-center">
-              <div>
-                <h2 className="text-2xl font-extrabold text-indigo-800 font-sans tracking-wide">
-                  Review Your Selections
-                </h2>
-                <p className="text-indigo-600 font-sans text-sm mt-1">
-                  Please verify your choices before submitting your vote
-                </p>
-              </div>
-              <div className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-indigo-100 text-indigo-800">
-                <Clock className="h-4 w-4 mr-1" />
-                {currentTime.toLocaleTimeString()}
-              </div>
-            </div>
+          <div className="bg-gradient-to-r from-indigo-100 to-indigo-50 p-6 flex justify-between items-center">
+          <div>
+            <h2 className="text-2xl font-extrabold text-indigo-800 font-sans tracking-wide">
+              Review Your Selections
+            </h2>
+            <p className="text-indigo-600 font-sans text-sm mt-1">
+              Please verify your choices before submitting your vote
+            </p>
+          </div>
+          <div className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-indigo-100 text-indigo-800 whitespace-nowrap">
+            <Clock className="h-4 w-4 mr-1" />
+            {currentTime.toLocaleTimeString()}
+          </div>
+        </div>
 
             <div className="p-6">
               {error && (

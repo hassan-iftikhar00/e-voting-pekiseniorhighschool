@@ -662,11 +662,13 @@ const VotingAuth: React.FC = () => {
       </div>
 
       {/* Live Voting Monitor Button and Footer */}
-      <div className="fixed bottom-4 left-2 right-2 flex flex-col sm:flex-row items-center justify-between px-4 sm:px-6 space-y-3 sm:space-y-0">
-        <div className="flex-1 text-center text-xs sm:text-sm text-white whitespace-normal sm:whitespace-nowrap">
+      <div className="fixed bottom-4 left-2 right-2 flex flex-col sm:flex-row items-center sm:justify-center px-4 sm:px-6 space-y-3 sm:space-y-0">
+        {/* Footer Text */}
+        <div className="text-center text-xs sm:text-sm text-white whitespace-normal sm:whitespace-nowrap sm:absolute sm:left-1/2 sm:transform sm:-translate-x-1/2">
           Monitored by Secured Smart System (Contact +233 24 333 9546)
         </div>
 
+        {/* Polling Dashboard Button */}
         <button
           onClick={() => {
             setShowMonitor(!showMonitor);
@@ -676,7 +678,7 @@ const VotingAuth: React.FC = () => {
             showMonitor
               ? "bg-red-600 hover:bg-red-700 pr-2"
               : "bg-green-600 hover:bg-green-700"
-          }`}
+          } sm:ml-auto`}
         >
           <Activity
             className={`h-4 w-4 sm:h-5 sm:w-5 ${
