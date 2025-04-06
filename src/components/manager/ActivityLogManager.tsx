@@ -38,9 +38,17 @@ interface ActivityLog {
   action: string;
   entity: string;
   entityId: string;
-  details: string;
+  details: any; // Keep this as 'any' since it can vary
   ipAddress: string;
   timestamp: string;
+}
+
+// Add this interface for login details
+interface LoginDetails {
+  username?: string;
+  userId?: string;
+  role?: string;
+  isAdmin?: boolean;
 }
 
 const ActivityLogManager: React.FC = () => {
@@ -107,9 +115,20 @@ const ActivityLogManager: React.FC = () => {
 
       const data = await response.json();
 
-      // If we received fewer logs than requested, there are no more logs to load
-      if (data.length < logsPerPage) {
-        setHasMore(false);
+      // Check if the total count header is provided by the API
+      const totalCountHeader = response.headers.get("X-Total-Count");
+      const totalCount = totalCountHeader
+        ? parseInt(totalCountHeader, 10)
+        : null;
+
+      // Modified: Check if there are more logs to load based on total count
+      if (totalCount) {
+        // If we have a total count, use it to determine if there are more logs
+        const currentlyLoaded = reset ? data.length : logs.length + data.length;
+        setHasMore(currentlyLoaded < totalCount);
+      } else {
+        // Fallback to the original check (received less than requested)
+        setHasMore(data.length >= logsPerPage);
       }
 
       if (reset) {
@@ -172,8 +191,8 @@ const ActivityLogManager: React.FC = () => {
         (log) =>
           (typeof log.user === "string" && log.user === filters.user) ||
           (typeof log.user !== "string" &&
-            (log.user.username === filters.user ||
-              log.user.fullName === filters.user))
+            ((log.user.username && log.user.username === filters.user) ||
+              (log.user.fullName && log.user.fullName === filters.user)))
       );
     }
 
@@ -275,13 +294,147 @@ const ActivityLogManager: React.FC = () => {
     }
   };
 
-  // Add a helper function to safely render user information
-  const getUserDisplayName = (user: ActivityLog["user"]): string => {
-    if (!user) return "Unknown";
+  // Improved function to safely render user information
+  const getUserDisplayName = (
+    user: ActivityLog["user"],
+    log?: ActivityLog
+  ): string => {
+    console.log("Getting display name for user:", user); // Debug log
 
-    if (typeof user === "string") return user;
+    // First priority: check if this is a login action and extract username from details
+    if (log?.action === "user:login" && log?.details) {
+      try {
+        console.log("Login action detected, details:", log.details);
+        let loginDetails = log.details;
 
-    return user.fullName || user.username || "Unknown user";
+        // Handle string details (needs to be parsed)
+        if (typeof loginDetails === "string") {
+          try {
+            loginDetails = JSON.parse(loginDetails);
+            console.log("Parsed string details:", loginDetails);
+          } catch (err) {
+            // If not valid JSON, check if it contains username information directly
+            const usernameMatch = loginDetails.match(/username["\s:]+([^"]+)/i);
+            if (usernameMatch && usernameMatch[1]) {
+              console.log(
+                "Extracted username from string via regex:",
+                usernameMatch[1]
+              );
+              return usernameMatch[1].trim();
+            }
+          }
+        }
+
+        // Now loginDetails should be an object
+        if (loginDetails && typeof loginDetails === "object") {
+          if (loginDetails.username) {
+            console.log(
+              "Found username in login details object:",
+              loginDetails.username
+            );
+            return loginDetails.username;
+          }
+        }
+      } catch (e) {
+        console.error("Error extracting username from login details:", e);
+      }
+    }
+
+    // For direct username access from user properties
+    if (!user) {
+      console.log("User is undefined/null, returning 'Unknown'");
+      return "Unknown";
+    }
+
+    // Direct access for string users
+    if (typeof user === "string") {
+      console.log("User is a direct string value:", user);
+      return user;
+    }
+
+    // Direct access from user object properties
+    if (user.username) {
+      console.log("Found username property in user object:", user.username);
+      return user.username;
+    }
+
+    if (user.fullName) {
+      console.log("Found fullName property in user object:", user.fullName);
+      return user.fullName;
+    }
+
+    // Special handling for login logs using user ID
+    if (user._id && logs.length > 0) {
+      console.log("Searching for username by user ID:", user._id);
+
+      // Look for any login log with this user ID that has username in details
+      const loginLog = logs.find(
+        (log) =>
+          log.action === "user:login" &&
+          ((typeof log.user !== "string" && log.user?._id === user._id) ||
+            log.userId === user._id) &&
+          log.details
+      );
+
+      if (loginLog) {
+        console.log("Found matching login log:", loginLog);
+        try {
+          // Extract username from the matching log details
+          let loginDetails = loginLog.details;
+          if (typeof loginDetails === "string") {
+            // Try to parse as JSON
+            try {
+              loginDetails = JSON.parse(loginDetails);
+            } catch (err) {
+              // If not JSON, try regex extraction
+              const usernameMatch = loginDetails.match(
+                /username["\s:]+([^"]+)/i
+              );
+              if (usernameMatch && usernameMatch[1]) {
+                console.log("Extracted username via regex:", usernameMatch[1]);
+                return usernameMatch[1].trim();
+              }
+            }
+          }
+
+          if (
+            loginDetails &&
+            typeof loginDetails === "object" &&
+            loginDetails.username
+          ) {
+            console.log(
+              "Found username in related login log:",
+              loginDetails.username
+            );
+            return loginDetails.username;
+          }
+        } catch (e) {
+          console.error("Error processing related login log:", e);
+        }
+      }
+    }
+
+    // Last attempt: direct access to user details
+    if (log?.details) {
+      try {
+        const details =
+          typeof log.details === "string"
+            ? JSON.parse(log.details)
+            : log.details;
+
+        if (details && details.username) {
+          console.log("Found username in log details:", details.username);
+          return details.username;
+        }
+      } catch (e) {
+        console.error("Error extracting username from log details:", e);
+      }
+    }
+
+    console.log(
+      "No username found for this log entry, returning 'Unknown user'"
+    );
+    return "Unknown user";
   };
 
   // Add a helper function to safely get role name
@@ -295,7 +448,7 @@ const ActivityLogManager: React.FC = () => {
     return user.role?.name || "";
   };
 
-  // Add a helper function to format the details field
+  // Add this helper function to format the details field with improved debugging
   const formatDetails = (details: any, action: string): React.ReactNode => {
     // If details is a string, just return it
     if (typeof details === "string") {
@@ -305,23 +458,54 @@ const ActivityLogManager: React.FC = () => {
     // If it's a login action, format it nicely
     if (action === "user:login" && details) {
       try {
-        // Handle both string JSON and object format
-        const loginInfo =
-          typeof details === "string" ? JSON.parse(details) : details;
+        console.log("Formatting login details:", details);
+        // Handle both string JSON and object format with proper typing
+        const loginInfo: LoginDetails =
+          typeof details === "string"
+            ? JSON.parse(details)
+            : (details as LoginDetails);
+
+        console.log("Processed login info:", loginInfo);
+
         return (
           <div>
             <p>
               <span className="font-medium">Username:</span>{" "}
-              {loginInfo.username || "Unknown"}
+              {loginInfo?.username || "Unknown"}
             </p>
             <p>
               <span className="font-medium">Role:</span>{" "}
-              {loginInfo.role || "None"}
+              {loginInfo?.role || "None"}
             </p>
           </div>
         );
       } catch (e) {
         console.error("Error parsing login details:", e);
+
+        // Fallback for non-JSON strings - try regex extraction
+        if (typeof details === "string") {
+          const usernameMatch = details.match(/username["\s:]+([^"]+)/i);
+          const roleMatch = details.match(/role["\s:]+([^"]+)/i);
+
+          if (usernameMatch || roleMatch) {
+            return (
+              <div>
+                {usernameMatch && (
+                  <p>
+                    <span className="font-medium">Username:</span>{" "}
+                    {usernameMatch[1].trim()}
+                  </p>
+                )}
+                {roleMatch && (
+                  <p>
+                    <span className="font-medium">Role:</span>{" "}
+                    {roleMatch[1].trim()}
+                  </p>
+                )}
+              </div>
+            );
+          }
+        }
       }
     }
 
@@ -335,7 +519,7 @@ const ActivityLogManager: React.FC = () => {
     }
   };
 
-  // Add a text-only version for printing and export
+  // Add this improved text-only version for printing and export
   const formatDetailsAsText = (details: any, action: string): string => {
     if (typeof details === "string") {
       return details;
@@ -343,13 +527,30 @@ const ActivityLogManager: React.FC = () => {
 
     if (action === "user:login" && details) {
       try {
-        const loginInfo =
-          typeof details === "string" ? JSON.parse(details) : details;
-        return `Username: ${loginInfo.username || "Unknown"}, Role: ${
-          loginInfo.role || "None"
+        const loginInfo: LoginDetails =
+          typeof details === "string"
+            ? JSON.parse(details)
+            : (details as LoginDetails);
+
+        return `Username: ${loginInfo?.username || "Unknown"}, Role: ${
+          loginInfo?.role || "None"
         }`;
       } catch (e) {
         console.error("Error formatting login details:", e);
+
+        // Fallback for non-JSON strings - try regex extraction
+        if (typeof details === "string") {
+          const usernameMatch = details.match(/username["\s:]+([^"]+)/i);
+          const roleMatch = details.match(/role["\s:]+([^"]+)/i);
+
+          if (usernameMatch || roleMatch) {
+            return `Username: ${
+              usernameMatch ? usernameMatch[1].trim() : "Unknown"
+            }, Role: ${roleMatch ? roleMatch[1].trim() : "None"}`;
+          }
+        }
+
+        return "Error formatting login details";
       }
     }
 
@@ -443,7 +644,6 @@ const ActivityLogManager: React.FC = () => {
         </head>
         <body>
           <h1>Peki Senior High School - Activity Logs</h1>
-          
           <div class="filter-info">
             ${
               Object.entries(filters).some(([_, value]) => value)
@@ -458,16 +658,13 @@ const ActivityLogManager: React.FC = () => {
       filteredLogs.length
     } logs</p>
           </div>
-          
           <table>
             <thead>
               <tr>
                 <th>Time</th>
                 <th>User</th>
                 <th>Action</th>
-                <th>Entity</th>
                 <th>Details</th>
-                <th>IP Address</th>
               </tr>
             </thead>
             <tbody>
@@ -480,16 +677,13 @@ const ActivityLogManager: React.FC = () => {
                     getUserRole(log.user) ? `(${getUserRole(log.user)})` : ""
                   }</td>
                   <td>${log.action}</td>
-                  <td>${log.entity}</td>
                   <td>${formatDetailsAsText(log.details, log.action)}</td>
-                  <td>${log.ipAddress}</td>
                 </tr>
               `
                 )
                 .join("")}
             </tbody>
           </table>
-          
           <div class="footer">
             <p>Printed on ${new Date().toLocaleString()}</p>
             <p>Peki Senior High School - Prefectorial Elections ${new Date().getFullYear()}</p>
@@ -505,7 +699,7 @@ const ActivityLogManager: React.FC = () => {
   // Export logs to CSV
   const handleExport = () => {
     // Create CSV content
-    let csvContent = "Time,User,Role,Action,Entity,Details,IP Address\n";
+    let csvContent = "Time,User,Role,Action,Details\n";
 
     displayedLogs.forEach((log) => {
       const user = getUserDisplayName(log.user);
@@ -519,7 +713,7 @@ const ActivityLogManager: React.FC = () => {
 
       csvContent += `"${formatTimestamp(log.timestamp)}","${user}","${role}","${
         log.action
-      }","${log.entity}","${escapedDetails}","${log.ipAddress}"\n`;
+      }","${escapedDetails}"\n`;
     });
 
     // Create and download the file
@@ -535,6 +729,185 @@ const ActivityLogManager: React.FC = () => {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  };
+
+  // Add a new helper function to identify voting-related logs
+  const isVotingLog = (log: ActivityLog): boolean => {
+    // Check action type
+    const voteActionMatches =
+      log.action === "vote:submit" ||
+      log.action === "voter:voted" ||
+      log.action === "vote:cast" ||
+      log.action === "vote:recorded" ||
+      log.action.toLowerCase().includes("vote");
+
+    // Check details for vote-related content if action matches
+    if (voteActionMatches && log.details) {
+      try {
+        const details =
+          typeof log.details === "string"
+            ? JSON.parse(log.details)
+            : log.details;
+
+        // Look for voting-related fields in details
+        if (
+          details.selections ||
+          details.positions ||
+          details.votedFor ||
+          details.candidateId ||
+          details.positionId
+        ) {
+          return true;
+        }
+      } catch (e) {
+        // If details is a string but not valid JSON, check for vote keywords
+        if (typeof log.details === "string") {
+          return (
+            log.details.toLowerCase().includes("vote") ||
+            log.details.toLowerCase().includes("ballot") ||
+            log.details.toLowerCase().includes("candidate")
+          );
+        }
+      }
+    }
+
+    // Original entity check (if entity field exists)
+    if (log.entity === "voter" || log.entity === "vote") {
+      return true;
+    }
+
+    // Check userId against voter IDs if it might be a voter
+    if (
+      log.userId &&
+      (log.userId.toString().includes("VOTER") ||
+        (log.details &&
+          typeof log.details === "string" &&
+          log.details.toLowerCase().includes("voter")))
+    ) {
+      return true;
+    }
+
+    return voteActionMatches;
+  };
+
+  // Add a function to extract the number of positions voted for from log details
+  const getPositionsVotedCount = (details: any): number => {
+    if (!details) return 0;
+
+    try {
+      // If details is a string, try to parse it
+      const detailsObj =
+        typeof details === "string" ? JSON.parse(details) : details;
+
+      // Look for selections or positions array
+      if (detailsObj.selections && Array.isArray(detailsObj.selections)) {
+        return detailsObj.selections.length;
+      }
+
+      if (detailsObj.positions && Array.isArray(detailsObj.positions)) {
+        return detailsObj.positions.length;
+      }
+
+      // If we have a votedFor object, count its keys
+      if (detailsObj.votedFor && typeof detailsObj.votedFor === "object") {
+        return Object.keys(detailsObj.votedFor).length;
+      }
+
+      // Default to 3 positions if we can't determine
+      return 3;
+    } catch (e) {
+      console.error("Error extracting positions count:", e);
+      return 3; // Default fallback
+    }
+  };
+
+  // Format date in the specified format (May 15, 2025)
+  const formatDateForVoting = (timestamp: string): string => {
+    if (!timestamp) return "Unknown date";
+
+    try {
+      const date = new Date(timestamp);
+      return date.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      });
+    } catch (e) {
+      console.error("Error formatting date:", e);
+      return "Unknown date";
+    }
+  };
+
+  // Format time in AM/PM format (11:45:10 AM)
+  const formatTimeForVoting = (timestamp: string): string => {
+    if (!timestamp) return "";
+
+    try {
+      const date = new Date(timestamp);
+      return date.toLocaleTimeString("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: true,
+      });
+    } catch (e) {
+      console.error("Error formatting time:", e);
+      return "";
+    }
+  };
+
+  // Get voter name from log
+  const getVoterName = (log: ActivityLog): string => {
+    // Try to get name from user object first
+    if (typeof log.user !== "string" && log.user?.fullName) {
+      return log.user.fullName;
+    }
+
+    // Try to extract from details
+    if (log.details) {
+      try {
+        const details =
+          typeof log.details === "string"
+            ? JSON.parse(log.details)
+            : log.details;
+        if (details.name) return details.name;
+        if (details.voter && details.voter.name) return details.voter.name;
+      } catch (e) {
+        // Fallback to regex extraction if JSON parsing fails
+        if (typeof log.details === "string") {
+          const nameMatch = log.details.match(/name["\s:]+([^"]+)/i);
+          if (nameMatch && nameMatch[1]) return nameMatch[1].trim();
+        }
+      }
+    }
+
+    // Fallback to user display name
+    return getUserDisplayName(log.user, log);
+  };
+
+  // Get voter ID from log
+  const getVoterId = (log: ActivityLog): string => {
+    // Try to extract from details
+    if (log.details) {
+      try {
+        const details =
+          typeof log.details === "string"
+            ? JSON.parse(log.details)
+            : log.details;
+        if (details.voterId) return details.voterId;
+        if (details.voter && details.voter.voterId)
+          return details.voter.voterId;
+      } catch (e) {
+        // Fallback to regex extraction if JSON parsing fails
+        if (typeof log.details === "string") {
+          const idMatch = log.details.match(/voterId["\s:]+([^"]+)/i);
+          if (idMatch && idMatch[1]) return idMatch[1].trim();
+        }
+      }
+    }
+
+    // Fallback to empty string
+    return "VOTER";
   };
 
   // If user doesn't have view permission
@@ -574,7 +947,6 @@ const ActivityLogManager: React.FC = () => {
           )}
         </div>
       </div>
-
       {/* Notification */}
       {notification && (
         <div
@@ -604,7 +976,6 @@ const ActivityLogManager: React.FC = () => {
           </button>
         </div>
       )}
-
       {/* Loading indicator */}
       {isLoading && (
         <div className="flex justify-center py-12">
@@ -614,7 +985,6 @@ const ActivityLogManager: React.FC = () => {
           </div>
         </div>
       )}
-
       {/* Error display */}
       {error && !isLoading && (
         <div className="bg-red-50 p-4 rounded-md">
@@ -624,7 +994,6 @@ const ActivityLogManager: React.FC = () => {
           </div>
         </div>
       )}
-
       {/* Filters and Actions */}
       <div className="bg-white p-4 rounded-lg shadow-md">
         <div className="flex flex-col md:flex-row md:items-center space-y-3 md:space-y-0">
@@ -637,7 +1006,6 @@ const ActivityLogManager: React.FC = () => {
               <SlidersHorizontal className="h-4 w-4 mr-1.5" />
               {showFilters ? "Hide Filters" : "Show Filters"}
             </button>
-
             <button
               onClick={handleClearFilters}
               className="inline-flex items-center px-3 py-1.5 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
@@ -647,7 +1015,6 @@ const ActivityLogManager: React.FC = () => {
               Clear Filters
             </button>
           </div>
-
           {/* Right side - Action buttons */}
           <div className="flex space-x-2 md:ml-auto">
             <button
@@ -668,7 +1035,6 @@ const ActivityLogManager: React.FC = () => {
             </button>
           </div>
         </div>
-
         {/* Search */}
         <div className="mt-4">
           <div className="relative">
@@ -684,7 +1050,6 @@ const ActivityLogManager: React.FC = () => {
             />
           </div>
         </div>
-
         {/* Advanced filters */}
         {showFilters && (
           <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mt-4">
@@ -707,7 +1072,6 @@ const ActivityLogManager: React.FC = () => {
                 ))}
               </select>
             </div>
-
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Action
@@ -727,7 +1091,6 @@ const ActivityLogManager: React.FC = () => {
                 ))}
               </select>
             </div>
-
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Entity
@@ -747,7 +1110,6 @@ const ActivityLogManager: React.FC = () => {
                 ))}
               </select>
             </div>
-
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 From Date
@@ -759,7 +1121,6 @@ const ActivityLogManager: React.FC = () => {
                 onChange={(e) => handleFilterChange("fromDate", e.target.value)}
               />
             </div>
-
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 To Date
@@ -773,7 +1134,6 @@ const ActivityLogManager: React.FC = () => {
             </div>
           </div>
         )}
-
         {/* Active filters display */}
         {(Object.values(filters).some(Boolean) || searchTerm) && (
           <div className="mt-4 flex flex-wrap items-center text-sm text-gray-500">
@@ -781,7 +1141,6 @@ const ActivityLogManager: React.FC = () => {
               <Filter className="h-4 w-4 mr-1 text-gray-400" />
               Active filters:
             </span>
-
             {searchTerm && (
               <span className="mr-2 bg-gray-100 px-2 py-1 rounded-md flex items-center">
                 Search: {searchTerm}
@@ -793,7 +1152,6 @@ const ActivityLogManager: React.FC = () => {
                 </button>
               </span>
             )}
-
             {Object.entries(filters).map(([key, value]) => {
               if (!value) return null;
               return (
@@ -814,7 +1172,6 @@ const ActivityLogManager: React.FC = () => {
           </div>
         )}
       </div>
-
       {/* Activity Log Table */}
       <div className="bg-white shadow-md rounded-lg overflow-hidden">
         {filteredLogs.length > 0 ? (
@@ -845,19 +1202,7 @@ const ActivityLogManager: React.FC = () => {
                       scope="col"
                       className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
                     >
-                      Entity
-                    </th>
-                    <th
-                      scope="col"
-                      className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-                    >
                       Details
-                    </th>
-                    <th
-                      scope="col"
-                      className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-                    >
-                      IP Address
                     </th>
                   </tr>
                 </thead>
@@ -865,55 +1210,96 @@ const ActivityLogManager: React.FC = () => {
                   {displayedLogs.map((log) => (
                     <tr key={log._id} className="hover:bg-gray-50">
                       <td className="px-3 py-4 whitespace-nowrap">
-                        <div className="flex items-center text-sm text-gray-900">
-                          <Clock className="h-4 w-4 text-gray-500 mr-1" />
-                          {formatTimestamp(log.timestamp)}
-                        </div>
-                      </td>
-                      <td className="px-3 py-4 whitespace-nowrap">
-                        <div className="flex items-center">
-                          <User className="h-4 w-4 text-gray-500 mr-1" />
-                          <div>
-                            <div className="text-sm font-medium text-gray-900">
-                              {getUserDisplayName(log.user)}
-                            </div>
-                            {getUserRole(log.user) && (
-                              <div className="text-xs text-gray-500">
-                                {getUserRole(log.user)}
-                              </div>
-                            )}
+                        {isVotingLog(log) ? (
+                          <div className="flex flex-col">
+                            <span className="text-sm font-medium text-gray-900">
+                              {formatDateForVoting(log.timestamp)}
+                            </span>
+                            <span className="text-xs text-gray-500">
+                              {formatTimeForVoting(log.timestamp)}
+                            </span>
                           </div>
-                        </div>
+                        ) : (
+                          <div className="flex items-center text-sm text-gray-900">
+                            <Clock className="h-4 w-4 text-gray-500 mr-1" />
+                            {formatTimestamp(log.timestamp)}
+                          </div>
+                        )}
                       </td>
                       <td className="px-3 py-4 whitespace-nowrap">
-                        <div className="flex items-center">
-                          <Activity className="h-4 w-4 text-gray-500 mr-1" />
-                          <span className="text-sm text-gray-900">
-                            {log.action}
-                          </span>
-                        </div>
+                        {isVotingLog(log) ? (
+                          <div className="flex flex-col">
+                            <div className="flex items-center">
+                              <User className="h-4 w-4 text-indigo-500 mr-1" />
+                              <span className="text-sm font-medium text-gray-900">
+                                Voter {getVoterId(log)} voted
+                              </span>
+                            </div>
+                            <span className="text-sm text-gray-700 mt-1">
+                              {getVoterName(log)}
+                            </span>
+                            <span className="text-xs text-gray-500 mt-0.5">
+                              Positions: {getPositionsVotedCount(log.details)}
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="flex items-center">
+                            <User className="h-4 w-4 text-gray-500 mr-1" />
+                            <div>
+                              <div className="text-sm font-medium text-gray-900">
+                                {getUserDisplayName(log.user, log)}
+                              </div>
+                              {getUserRole(log.user) && (
+                                <div className="text-xs text-gray-500">
+                                  {getUserRole(log.user)}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
                       </td>
-                      <td className="px-3 py-4 whitespace-nowrap">
-                        <span className="text-sm text-gray-900">
-                          {log.entity}
-                        </span>
-                      </td>
-                      <td className="px-3 py-4">
-                        <div className="text-sm text-gray-900 max-w-md break-words whitespace-pre-wrap">
-                          {formatDetails(log.details, log.action)}
-                        </div>
-                      </td>
-                      <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-500">
-                        {log.ipAddress}
-                      </td>
+                      {isVotingLog(log) ? (
+                        // If it's a voting log, just show minimal info in other columns
+                        <>
+                          <td className="px-3 py-4 whitespace-nowrap">
+                            <div className="flex items-center">
+                              <Activity className="h-4 w-4 text-green-500 mr-1" />
+                              <span className="text-sm text-green-700">
+                                Vote Submitted
+                              </span>
+                            </div>
+                          </td>
+                          <td className="px-3 py-4">
+                            <div className="text-sm text-gray-500">
+                              Vote recorded successfully
+                            </div>
+                          </td>
+                        </>
+                      ) : (
+                        // Use existing formatting for non-voting logs
+                        <>
+                          <td className="px-3 py-4 whitespace-nowrap">
+                            <div className="flex items-center">
+                              <Activity className="h-4 w-4 text-gray-500 mr-1" />
+                              <span className="text-sm text-gray-900">
+                                {log.action}
+                              </span>
+                            </div>
+                          </td>
+                          <td className="px-3 py-4">
+                            <div className="text-sm text-gray-900 max-w-md break-words whitespace-pre-wrap">
+                              {formatDetails(log.details, log.action)}
+                            </div>
+                          </td>
+                        </>
+                      )}
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-
             {/* Load More Button - Make sure it's visible by ensuring the condition is correct */}
-            {filteredLogs.length > displayedLogs.length && (
+            {hasMore && (
               <div className="flex justify-center p-4 border-t border-gray-200 bg-gray-50">
                 <button
                   onClick={handleLoadMore}
@@ -950,35 +1336,34 @@ const ActivityLogManager: React.FC = () => {
             </p>
           </div>
         )}
-
-        {/* Status bar */}
-        <div className="px-4 py-3 bg-gray-50 border-t border-gray-200 text-sm text-gray-500 flex items-center justify-between">
-          <div className="flex items-center">
-            <Info className="h-4 w-4 mr-1.5 text-gray-400" />
-            <span>
-              Showing{" "}
-              <span className="font-medium text-gray-900">
-                {displayedLogs.length}
-              </span>{" "}
-              of{" "}
-              <span className="font-medium text-gray-900">
-                {filteredLogs.length}
-              </span>{" "}
-              filtered logs
-            </span>
-          </div>
-          {logs.length > 0 && (
-            <div>
-              <button
-                onClick={handleClearFilters}
-                className="text-indigo-600 hover:text-indigo-900 text-xs font-medium"
-                disabled={!Object.values(filters).some(Boolean) && !searchTerm}
-              >
-                Clear all filters
-              </button>
-            </div>
-          )}
+      </div>
+      {/* Status bar */}
+      <div className="px-4 py-3 bg-gray-50 border-t border-gray-200 text-sm text-gray-500 flex items-center justify-between">
+        <div className="flex items-center">
+          <Info className="h-4 w-4 mr-1.5 text-gray-400" />
+          <span>
+            Showing{" "}
+            <span className="font-medium text-gray-900">
+              {displayedLogs.length}
+            </span>{" "}
+            of{" "}
+            <span className="font-medium text-gray-900">
+              {filteredLogs.length}
+            </span>{" "}
+            filtered logs
+          </span>
         </div>
+        {logs.length > 0 && (
+          <div>
+            <button
+              onClick={handleClearFilters}
+              className="text-indigo-600 hover:text-indigo-900 text-xs font-medium"
+              disabled={!Object.values(filters).some(Boolean) && !searchTerm}
+            >
+              Clear all filters
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

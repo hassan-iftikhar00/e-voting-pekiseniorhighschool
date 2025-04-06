@@ -16,9 +16,8 @@ import {
   ArrowDown,
   Home,
 } from "lucide-react";
-import { useUser } from "../../context/UserContext"; // Replace PermissionGuard import
+import { useUser } from "../../context/UserContext";
 
-// House interface to match backend model
 interface House {
   _id: string;
   name: string;
@@ -1018,10 +1017,10 @@ const HouseManager: React.FC = () => {
                   {visibleColumns.name && (
                     <td className="px-3 py-4 whitespace-nowrap">
                       <div className="flex items-center">
-                        <div
-                          className="h-5 w-5 rounded-full mr-2"
-                          style={{ backgroundColor: house.color }}
-                        ></div>
+                        <Home
+                          className="h-5 w-5 mr-2"
+                          style={{ color: house.color }}
+                        />
                         <div className="text-sm font-medium text-gray-900">
                           {house.name}
                         </div>

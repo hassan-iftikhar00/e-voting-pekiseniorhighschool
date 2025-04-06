@@ -59,11 +59,18 @@ const Candidates: React.FC = () => {
       return;
     }
 
+    const voterId = localStorage.getItem("voterId");
+    if (!voterId) {
+      setError("Please enter your Voter ID to view candidates.");
+      setLoading(false);
+      return;
+    }
+
     const fetchCandidatesData = async () => {
       setLoading(true);
       try {
         const response = await axios.get(
-          `${apiUrl}/api/candidates/byPosition`,
+          `${apiUrl}/api/candidates/for-voter?voterId=${voterId}`,
           {
             timeout: 15000,
             headers: {
@@ -87,6 +94,58 @@ const Candidates: React.FC = () => {
 
     fetchCandidatesData();
   }, [user, navigate, apiUrl]);
+
+  useEffect(() => {
+    const fetchCandidatesData = async () => {
+      setLoading(true);
+      try {
+        const voterId = localStorage.getItem("voterId");
+        if (!voterId) {
+          setError("Please enter your Voter ID to view candidates.");
+          setLoading(false);
+          return;
+        }
+
+        const response = await axios.get(
+          `${apiUrl}/api/candidates/for-voter?voterId=${voterId}`,
+          {
+            timeout: 15000,
+            headers: {
+              "Cache-Control": "no-cache",
+              Pragma: "no-cache",
+            },
+          }
+        );
+
+        if (!response.data || !Object.keys(response.data).length) {
+          setError("No candidates available for your voter group.");
+          setCandidatesByPosition({});
+          setPositions([]);
+          return;
+        }
+
+        setCandidatesByPosition(response.data);
+        setPositions(Object.keys(response.data));
+        setError("");
+      } catch (error) {
+        if (
+          axios.isAxiosError(error) &&
+          error.response &&
+          error.response.status === 404
+        ) {
+          setError(
+            "No candidates found for your voter group. Please contact the administrator."
+          );
+        } else {
+          setError("Failed to load candidates. Please try again.");
+        }
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchCandidatesData();
+  }, [apiUrl]);
 
   useEffect(() => {
     const unselected = positions.filter(
@@ -150,11 +209,21 @@ const Candidates: React.FC = () => {
   const handleRefresh = () => {
     setLoading(true);
     axios
-      .get(`${apiUrl}/api/candidates/byPosition`)
+      .get(
+        `${apiUrl}/api/candidates/for-voter?voterId=${localStorage.getItem(
+          "voterId"
+        )}`
+      )
       .then((response) => {
+        if (!response.data || !Object.keys(response.data).length) {
+          setError("No candidates available for your voter group.");
+          setCandidatesByPosition({});
+          setPositions([]);
+          return;
+        }
+
         setCandidatesByPosition(response.data);
         setPositions(Object.keys(response.data));
-        setLastUpdated(new Date());
         setError("");
       })
       .catch(() => {
@@ -182,6 +251,25 @@ const Candidates: React.FC = () => {
 
   if (!user) {
     return null;
+  }
+
+  if (!localStorage.getItem("voterId")) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-indigo-50">
+        <div className="text-center">
+          <h2 className="text-xl font-bold text-gray-800">Voter ID Required</h2>
+          <p className="text-gray-600 mt-2">
+            Please enter your Voter ID to view the candidates.
+          </p>
+          <button
+            onClick={() => navigate("/")}
+            className="mt-4 px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700"
+          >
+            Go to Home
+          </button>
+        </div>
+      </div>
+    );
   }
 
   return (

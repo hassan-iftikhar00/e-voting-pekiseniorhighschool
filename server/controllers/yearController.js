@@ -3,7 +3,7 @@ import Year from "../models/Year.js";
 // Get all years
 export const getAllYears = async (req, res) => {
   try {
-    const years = await Year.find().sort({ name: -1 });
+    const years = await Year.find().sort({ name: 1 }); // Sort by name
     res.status(200).json(years);
   } catch (error) {
     res.status(500).json({ message: "Server error", error: error.message });
@@ -15,28 +15,20 @@ export const createYear = async (req, res) => {
   try {
     const { name, description, active } = req.body;
 
-    // Validation
-    if (!name) {
-      return res.status(400).json({ message: "Year name is required" });
+    // If the new year is set as active, deactivate all other years
+    if (active) {
+      await Year.updateMany({ active: true }, { active: false });
     }
 
-    // Check if year already exists
-    const existingYear = await Year.findOne({ name });
-    if (existingYear) {
-      return res.status(400).json({ message: "Year already exists" });
-    }
+    const newYear = new Year({ name, description, active });
+    await newYear.save();
 
-    // Create new year
-    const year = new Year({
-      name,
-      description,
-      active,
-    });
-
-    await year.save();
-    res.status(201).json(year);
+    res.status(201).json(newYear);
   } catch (error) {
-    res.status(500).json({ message: "Server error", error: error.message });
+    console.error("Error creating year:", error);
+    res
+      .status(500)
+      .json({ message: "Failed to create year", error: error.message });
   }
 };
 
@@ -46,44 +38,27 @@ export const updateYear = async (req, res) => {
     const { id } = req.params;
     const { name, description, active } = req.body;
 
-    // Validation
-    if (!name) {
-      return res.status(400).json({ message: "Year name is required" });
+    // If the updated year is set as active, deactivate all other years
+    if (active) {
+      await Year.updateMany({ active: true }, { active: false });
     }
 
-    // Ensure we have at least one active year
-    if (active === false) {
-      const activeCount = await Year.countDocuments({ active: true });
-      if (activeCount <= 1) {
-        const currentActive = await Year.findOne({ _id: id, active: true });
-        if (currentActive) {
-          return res
-            .status(400)
-            .json({ message: "At least one year must be active" });
-        }
-      }
-    }
-
-    // Check if name already exists (excluding this year)
-    const existingYear = await Year.findOne({ name, _id: { $ne: id } });
-    if (existingYear) {
-      return res.status(400).json({ message: "Year name already exists" });
-    }
-
-    // Update year
-    const year = await Year.findByIdAndUpdate(
+    const updatedYear = await Year.findByIdAndUpdate(
       id,
       { name, description, active },
       { new: true }
     );
 
-    if (!year) {
+    if (!updatedYear) {
       return res.status(404).json({ message: "Year not found" });
     }
 
-    res.status(200).json(year);
+    res.status(200).json(updatedYear);
   } catch (error) {
-    res.status(500).json({ message: "Server error", error: error.message });
+    console.error("Error updating year:", error);
+    res
+      .status(500)
+      .json({ message: "Failed to update year", error: error.message });
   }
 };
 

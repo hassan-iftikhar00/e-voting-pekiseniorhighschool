@@ -4,6 +4,7 @@ import mongoose from "mongoose";
 import dotenv from "dotenv";
 import apiRoutes from "./routes/api.js";
 import { dropVoteUniqueIndex } from "./models/Vote.js";
+import "./models/ActivityLog.js";
 
 // Load environment variables
 dotenv.config();
@@ -25,6 +26,41 @@ app.get("/api/test", (req, res) => {
   res.json({ message: "API is accessible" });
 });
 
+// Add improved error handling for the bulk import endpoint
+app.use("/api/voters/bulk", (req, res, next) => {
+  console.log("==== BULK IMPORT MIDDLEWARE ====");
+  console.log("Request method:", req.method);
+  console.log("Request headers:", JSON.stringify(req.headers, null, 2));
+
+  // Print the raw body
+  if (req.method === "POST") {
+    try {
+      const rawBody = JSON.stringify(req.body, null, 2);
+      console.log("Raw request body size:", rawBody.length);
+      console.log("Request body sample:", rawBody.substring(0, 500));
+
+      // Check for proper format without rejecting immediately
+      if (!req.body || !req.body.voters) {
+        console.log("⚠️ Warning: Missing voters array in request body");
+      } else if (!Array.isArray(req.body.voters)) {
+        console.log(
+          "⚠️ Warning: Body.voters is not an array, it is:",
+          typeof req.body.voters
+        );
+      } else {
+        console.log(
+          `✅ Valid voters array with ${req.body.voters.length} items`
+        );
+      }
+    } catch (error) {
+      console.error("Error parsing/logging request body:", error);
+    }
+  }
+
+  console.log("============================");
+  next();
+});
+
 // Connect to MongoDB
 console.log("Connecting to MongoDB at:", process.env.MONGODB_URI);
 mongoose
@@ -36,9 +72,7 @@ mongoose
     await dropVoteUniqueIndex();
 
     // Start the server
-    app.listen(PORT, () => {
-      console.log(`Server running on http://localhost:${PORT}`);
-    });
+    startServer();
   })
   .catch((err) => console.error("MongoDB connection error:", err));
 
@@ -68,5 +102,26 @@ app._router.stack.forEach((middleware) => {
     });
   }
 });
+
+// Update the port configuration to use a fallback if 5000 is in use
+const startServer = () => {
+  const server = app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+  });
+
+  server.on("error", (e) => {
+    if (e.code === "EADDRINUSE") {
+      console.log(`Port ${PORT} is busy, trying ${PORT + 1}...`);
+      setTimeout(() => {
+        server.close();
+        app.listen(PORT + 1, () => {
+          console.log(`Server running on port ${PORT + 1}`);
+        });
+      }, 1000);
+    } else {
+      console.error("Server error:", e);
+    }
+  });
+};
 
 export default app;

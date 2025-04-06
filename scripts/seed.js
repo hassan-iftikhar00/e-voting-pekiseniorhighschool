@@ -1,53 +1,96 @@
-import mongoose from 'mongoose';
-import bcrypt from 'bcryptjs';
-import dotenv from 'dotenv';
-import User from '../models/User.js';
-import Voter from '../models/Voter.js';
-import Election from '../models/Election.js';
+import mongoose from "mongoose";
+import dotenv from "dotenv";
+import Position from "../server/models/Position.js";
+import Candidate from "../server/models/Candidate.js";
 
 dotenv.config();
 
 const createTestData = async () => {
   try {
     // Connect to MongoDB
-    await mongoose.connect(process.env.MONGODB_URI, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-    });
+    await mongoose.connect(
+      "mongodb+srv://peki:peki@cluster0.acwwe.mongodb.net/",
+      {
+        useNewUrlParser: true,
+        useUnifiedTopology: true,
+      }
+    );
 
-    // Create admin user
-    const adminPassword = await bcrypt.hash('admin123', 10);
-    const admin = await User.create({
-      username: 'admin',
-      password: adminPassword,
-      role: 'admin'
-    });
+    // Create a dummy electionId
+    const dummyElectionId = new mongoose.Types.ObjectId();
 
-    // Create test voter
-    const voter = await Voter.create({
-      user: admin._id,
-      voterId: 'VOTER2025',
-      name: 'John Doe',
-      hasVoted: false
-    });
+    // Create initial positions
+    const positions = [
+      {
+        title: "President",
+        priority: 1,
+        isActive: true,
+        electionId: dummyElectionId,
+      },
+      {
+        title: "Vice President",
+        priority: 2,
+        isActive: true,
+        electionId: dummyElectionId,
+      },
+      {
+        title: "Secretary",
+        priority: 3,
+        isActive: true,
+        electionId: dummyElectionId,
+      },
+      {
+        title: "Treasurer",
+        priority: 4,
+        isActive: true,
+        electionId: dummyElectionId,
+      },
+    ];
 
-    // Create test election
-    const now = new Date();
-    const election = await Election.create({
-      title: 'Student Council Election 2025',
-      startDate: now,
-      endDate: new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000), // 7 days from now
-      isActive: true
-    });
+    const createdPositions = await Promise.all(
+      positions.map((position) => Position.create(position))
+    );
 
-    console.log('Test data created successfully!');
-    console.log('\nAdmin Credentials:');
-    console.log('Username: admin');
-    console.log('Password: admin123');
-    console.log('\nVoter ID: VOTER2025');
+    console.log(`Created ${createdPositions.length} positions`);
 
+    // Create candidates for the positions
+    const candidates = [
+      {
+        name: "Alice Johnson",
+        positionId: createdPositions[0]._id,
+        isActive: true,
+      },
+      {
+        name: "Bob Smith",
+        positionId: createdPositions[0]._id,
+        isActive: true,
+      },
+      {
+        name: "Charlie Brown",
+        positionId: createdPositions[1]._id,
+        isActive: true,
+      },
+      {
+        name: "Diana Prince",
+        positionId: createdPositions[2]._id,
+        isActive: true,
+      },
+      {
+        name: "Ethan Hunt",
+        positionId: createdPositions[3]._id,
+        isActive: true,
+      },
+    ];
+
+    await Promise.all(
+      candidates.map((candidate) => Candidate.create(candidate))
+    );
+
+    console.log(`Created ${candidates.length} candidates`);
+
+    console.log("Test data created successfully!");
   } catch (error) {
-    console.error('Error creating test data:', error);
+    console.error("Error creating test data:", error);
   } finally {
     await mongoose.disconnect();
   }

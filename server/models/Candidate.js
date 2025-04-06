@@ -42,18 +42,6 @@ const candidateSchema = new Schema(
       type: Boolean,
       default: true,
     },
-    voterCategory: {
-      type: {
-        type: String,
-        enum: ["all", "year", "class", "house"],
-        default: "all",
-      },
-      values: [
-        {
-          type: String,
-        },
-      ],
-    },
     createdAt: {
       type: Date,
       default: Date.now,
@@ -61,6 +49,17 @@ const candidateSchema = new Schema(
     position: {
       type: Schema.Types.ObjectId,
       ref: "Position",
+    },
+    voterCategory: {
+      type: {
+        type: String,
+        enum: ["all", "class", "year", "house"],
+        default: "all",
+      },
+      values: {
+        type: [String],
+        default: [],
+      },
     },
   },
   { timestamps: true }

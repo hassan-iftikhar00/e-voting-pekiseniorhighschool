@@ -22,6 +22,7 @@ import {
   ImageIcon,
 } from "lucide-react";
 import { useUser } from "../../context/UserContext";
+import { Route, Link } from "react-router-dom";
 
 // Interface for candidate data
 interface Candidate {
@@ -46,6 +47,7 @@ interface Position {
   title: string;
   priority: number;
   isActive: boolean;
+  maxCandidates: number; // Add maxCandidates to Position interface
 }
 
 // Define types for voter categories
@@ -58,13 +60,15 @@ interface VoterCategory {
 
 const CandidatesManager: React.FC = () => {
   const { hasPermission } = useUser();
-  // Initialize with empty array instead of undefined initialCandidates
   const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [positions, setPositions] = useState<Position[]>([]);
+  const [years, setYears] = useState<string[]>([]); // Fetch years from the database
+  const [classes, setClasses] = useState<string[]>([]); // Fetch classes from the database
+  const [houses, setHouses] = useState<string[]>([]); // Fetch houses from the database
   const [searchTerm, setSearchTerm] = useState("");
   const [filterPosition, setFilterPosition] = useState<string>("");
   const [filterActive, setFilterActive] = useState<boolean | null>(null);
-  const [filterClass, setFilterClass] = useState<string>(""); // Add missing filterClass state
+  const [filterClass, setFilterClass] = useState<string>("");
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingCandidate, setEditingCandidate] = useState<Candidate | null>(
     null
@@ -79,23 +83,6 @@ const CandidatesManager: React.FC = () => {
   const columnSelectorRef = useRef<HTMLDivElement>(null);
   const [isLoading, setIsLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // Reference data for filters - now properly initialized
-  const [years] = useState<string[]>(["2023", "2024", "2025"]);
-  const [classes] = useState<string[]>([
-    "Form 1A",
-    "Form 1B",
-    "Form 2A",
-    "Form 2B",
-    "Form 3A",
-    "Form 3B",
-  ]);
-  const [houses] = useState<string[]>([
-    "Red House",
-    "Blue House",
-    "Green House",
-    "Yellow House",
-  ]);
 
   // Visible columns state
   const [visibleColumns, setVisibleColumns] = useState({
@@ -300,10 +287,54 @@ const CandidatesManager: React.FC = () => {
     }
   };
 
+  // Fetch years, classes, and houses from the database
+  const fetchYears = async () => {
+    try {
+      const response = await fetch(
+        `${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/years`
+      );
+      if (!response.ok) throw new Error("Failed to fetch years");
+      const data = await response.json();
+      setYears(data.map((year: { name: string }) => year.name));
+    } catch (error) {
+      console.error("Error fetching years:", error);
+    }
+  };
+
+  const fetchClasses = async () => {
+    try {
+      const response = await fetch(
+        `${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/classes`
+      );
+      if (!response.ok) throw new Error("Failed to fetch classes");
+      const data = await response.json();
+      setClasses(data.map((cls: { name: string }) => cls.name));
+    } catch (error) {
+      console.error("Error fetching classes:", error);
+    }
+  };
+
+  const fetchHouses = async () => {
+    try {
+      const response = await fetch(
+        `${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/houses`
+      );
+      if (!response.ok) throw new Error("Failed to fetch houses");
+      const data = await response.json();
+      setHouses(data.map((house: { name: string }) => house.name));
+    } catch (error) {
+      console.error("Error fetching houses:", error);
+    }
+  };
+
   // Load data on component mount
   useEffect(() => {
+    console.log("candidates page mounted");
     fetchPositions();
     fetchCandidates();
+    fetchYears();
+    fetchClasses();
+    fetchHouses();
   }, []);
 
   // Filter and sort candidates
@@ -378,6 +409,19 @@ const CandidatesManager: React.FC = () => {
       return;
     }
 
+    // Check if adding another candidate would exceed the position's max candidate limit
+    const positionId = newCandidate.positionId;
+    const currentCount = getPositionCandidateCount(positionId);
+    const maxAllowed = getPositionMaxCandidates(positionId);
+
+    if (currentCount >= maxAllowed) {
+      setNotification({
+        type: "error",
+        message: `Cannot add more candidates. Position already has the maximum of ${maxAllowed} candidate(s).`,
+      });
+      return;
+    }
+
     try {
       setIsLoading(true);
 
@@ -448,6 +492,22 @@ const CandidatesManager: React.FC = () => {
         message: "Name and position are required",
       });
       return;
+    }
+
+    // Only check position limits if the position is being changed
+    if (editingCandidate.positionId !== editingCandidate._id) {
+      const positionId = editingCandidate.positionId;
+      const currentCount = getPositionCandidateCount(positionId);
+      const maxAllowed = getPositionMaxCandidates(positionId);
+
+      // Since we're editing, we don't count the current candidate
+      if (currentCount >= maxAllowed) {
+        setNotification({
+          type: "error",
+          message: `Cannot change to this position. It already has the maximum of ${maxAllowed} candidate(s).`,
+        });
+        return;
+      }
     }
 
     try {
@@ -601,7 +661,76 @@ const CandidatesManager: React.FC = () => {
     }
   };
 
-  // Handle print and export functions
+  // Handle export to Excel (CSV)
+  const handleExportExcel = () => {
+    try {
+      // Create CSV content with proper headers - remove house, add voter category
+      let csvContent = "S/N,Name,Position,Year/Class,Voter Category,Status\n";
+
+      // Function to safely escape CSV fields
+      const escapeCSV = (field: string) => {
+        if (field === null || field === undefined) return '""';
+        // Replace quotes with double quotes (CSV standard for escaping quotes)
+        const escaped = field.toString().replace(/"/g, '""');
+        return `"${escaped}"`;
+      };
+
+      candidates.forEach((candidate, index) => {
+        // Get the position title properly
+        const positionTitle =
+          candidate.position?.title ||
+          positions.find((p) => p._id === candidate.positionId)?.title ||
+          "";
+
+        // Get voter category label
+        const voterCategoryLabel = getVoterCategoryLabel(
+          candidate.voterCategory
+        );
+
+        // Build each row with proper escaping
+        const row = [
+          index + 1, // S/N
+          escapeCSV(candidate.name || ""), // Name
+          escapeCSV(positionTitle), // Position
+          escapeCSV(candidate.class || candidate.year || ""), // Year/Class
+          escapeCSV(voterCategoryLabel), // Voter Category
+          escapeCSV(candidate.isActive ? "Active" : "Inactive"), // Status
+        ].join(",");
+
+        csvContent += row + "\n";
+      });
+
+      // Create a blob and download link
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.setAttribute("href", url);
+      link.setAttribute(
+        "download",
+        `candidates_list_${new Date().toISOString().split("T")[0]}.csv`
+      );
+      link.style.visibility = "hidden";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      // Show success notification
+      setNotification({
+        type: "success",
+        message: "Candidates exported successfully",
+      });
+      setTimeout(() => setNotification(null), 3000);
+    } catch (error) {
+      console.error("Error exporting candidates:", error);
+      setNotification({
+        type: "error",
+        message: "Failed to export candidates",
+      });
+      setTimeout(() => setNotification(null), 3000);
+    }
+  };
+
+  // Handle print function
   const handlePrint = () => {
     const printWindow = window.open("", "_blank");
     if (!printWindow) {
@@ -620,68 +749,68 @@ const CandidatesManager: React.FC = () => {
         .status-active { color: #047857; font-weight: bold; }
         .status-inactive { color: #b91c1c; font-weight: bold; }
         .footer { margin-top: 20px; text-align: center; font-size: 12px; color: #6b7280; }
-        .candidate-image { width: 50px; height: 50px; object-fit: cover; border-radius: 50%; }
+        .candidate-image { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; }
       </style>
     `;
+
+    // Apply the same sorting as in the UI before printing
+    const sortedCandidates = [...candidates].sort((a, b) => {
+      if (sortField === "name") {
+        return sortDirection === "asc"
+          ? a.name.localeCompare(b.name)
+          : b.name.localeCompare(a.name);
+      } else if (sortField === "position") {
+        const posA = positions.find((p) => p._id === a.positionId)?.title || "";
+        const posB = positions.find((p) => p._id === b.positionId)?.title || "";
+        return sortDirection === "asc"
+          ? posA.localeCompare(posB)
+          : posB.localeCompare(posA);
+      }
+      return 0;
+    });
 
     printWindow.document.write(`
       <!DOCTYPE html>
       <html>
         <head>
-          <title>Candidates List - Peki Senior High School</title>
+          <title>Candidates List</title>
           ${styles}
         </head>
         <body>
-          <h1>Peki Senior High School - Candidates List</h1>
+          <h1>Candidates List</h1>
           
           <table>
             <thead>
               <tr>
                 <th>S/N</th>
-                ${visibleColumns.name ? "<th>Name</th>" : ""}
-                ${visibleColumns.position ? "<th>Position</th>" : ""}
-                ${visibleColumns.class ? "<th>Class</th>" : ""}
-                ${visibleColumns.year ? "<th>Year</th>" : ""}
-                ${visibleColumns.house ? "<th>House</th>" : ""}
-                ${visibleColumns.status ? "<th>Status</th>" : ""}
+                <th>Image</th>
+                <th>Name</th>
+                <th>Position</th>
+                <th>Class/Year</th>
+                <th>Voter Category</th>
+                <th>Status</th>
               </tr>
             </thead>
             <tbody>
-              ${filteredCandidates
+              ${sortedCandidates
                 .map(
                   (candidate, index) => `
                 <tr>
                   <td>${index + 1}</td>
-                  ${visibleColumns.name ? `<td>${candidate.name}</td>` : ""}
-                  ${
-                    visibleColumns.position
-                      ? `<td>${getPositionTitle(candidate.positionId)}</td>`
-                      : ""
-                  }
-                  ${
-                    visibleColumns.class
-                      ? `<td>${candidate.class || "-"}</td>`
-                      : ""
-                  }
-                  ${
-                    visibleColumns.year
-                      ? `<td>${candidate.year || "-"}</td>`
-                      : ""
-                  }
-                  ${
-                    visibleColumns.house
-                      ? `<td>${candidate.house || "-"}</td>`
-                      : ""
-                  }
-                  ${
-                    visibleColumns.status
-                      ? `<td class="${
-                          candidate.isActive
-                            ? "status-active"
-                            : "status-inactive"
-                        }">${candidate.isActive ? "Active" : "Inactive"}</td>`
-                      : ""
-                  }
+                  <td>${
+                    candidate.image
+                      ? `<img src="${candidate.image}" alt="${candidate.name}" class="candidate-image" />`
+                      : "–"
+                  }</td>
+                  <td>${candidate.name}</td>
+                  <td>${getPositionTitle(candidate.positionId)}</td>
+                  <td>${candidate.class || candidate.year || "–"}</td>
+                  <td>${getVoterCategoryLabel(candidate.voterCategory)}</td>
+                  <td class="${
+                    candidate.isActive ? "status-active" : "status-inactive"
+                  }">
+                    ${candidate.isActive ? "Active" : "Inactive"}
+                  </td>
                 </tr>
               `
                 )
@@ -691,7 +820,6 @@ const CandidatesManager: React.FC = () => {
           
           <div class="footer">
             <p>Printed on ${new Date().toLocaleString()}</p>
-            <p>Peki Senior High School - Prefectorial Elections 2025</p>
           </div>
         </body>
       </html>
@@ -704,32 +832,28 @@ const CandidatesManager: React.FC = () => {
     }, 500);
   };
 
-  // Handle export to Excel
-  const handleExportExcel = () => {
-    // Create CSV content
-    let csvContent = "S/N,Name,Position,Class,Year,House,Status\n";
+  // Add this helper function after the other utility functions
+  const getPositionCandidateCount = (positionId: string) => {
+    return candidates.filter((c) => c.positionId === positionId && c.isActive)
+      .length;
+  };
 
-    filteredCandidates.forEach((candidate, index) => {
-      csvContent += `${index + 1},"${candidate.name}","${getPositionTitle(
-        candidate.positionId
-      )}","${candidate.class || ""}","${candidate.year || ""}","${
-        candidate.house || ""
-      }","${candidate.isActive ? "Active" : "Inactive"}"\n`;
-    });
+  const getPositionMaxCandidates = (positionId: string) => {
+    const position = positions.find((p) => p._id === positionId);
+    return position?.maxCandidates || 0;
+  };
 
-    // Create a blob and download link
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.setAttribute("href", url);
-    link.setAttribute(
-      "download",
-      `candidates_list_${new Date().toISOString().split("T")[0]}.csv`
-    );
-    link.style.visibility = "hidden";
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  const isPositionAtMaxCandidates = (positionId: string) => {
+    if (!positionId) return false;
+    const currentCount = getPositionCandidateCount(positionId);
+    const maxAllowed = getPositionMaxCandidates(positionId);
+
+    // When editing, we don't count the current candidate being edited
+    if (editingCandidate && editingCandidate.positionId === positionId) {
+      return currentCount > maxAllowed;
+    }
+
+    return currentCount >= maxAllowed;
   };
 
   return (
@@ -769,12 +893,12 @@ const CandidatesManager: React.FC = () => {
           <p className="text-gray-500 mb-6">
             You need to create positions before adding candidates
           </p>
-          <a
-            href="/election-manager/positions"
+          <Link
+            to="/election-manager/positions"
             className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
           >
             Manage Positions
-          </a>
+          </Link>
         </div>
       )}
 
@@ -919,32 +1043,68 @@ const CandidatesManager: React.FC = () => {
                 Position
               </label>
               <select
-                className="w-full p-2 border border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500"
+                className={`w-full p-2 border border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500 ${
+                  editingCandidate && editingCandidate.positionId ? "" : ""
+                }`}
                 value={
                   editingCandidate
                     ? editingCandidate.positionId
                     : newCandidate.positionId
                 }
                 onChange={(e) => {
+                  const newPositionId = e.target.value;
+                  // Check if the selected position has reached its maximum candidates
+                  if (
+                    newPositionId &&
+                    isPositionAtMaxCandidates(newPositionId)
+                  ) {
+                    setNotification({
+                      type: "error",
+                      message: `This position already has the maximum allowed candidates (${getPositionMaxCandidates(
+                        newPositionId
+                      )})`,
+                    });
+                    return;
+                  }
+
                   if (editingCandidate) {
                     setEditingCandidate({
                       ...editingCandidate,
-                      positionId: e.target.value,
+                      positionId: newPositionId,
                     });
                   } else {
                     setNewCandidate({
                       ...newCandidate,
-                      positionId: e.target.value,
+                      positionId: newPositionId,
                     });
                   }
                 }}
               >
                 <option value="">Select position</option>
-                {positions.map((position) => (
-                  <option key={position._id} value={position._id}>
-                    {position.title}
-                  </option>
-                ))}
+                {positions.map((position) => {
+                  const currentCount = getPositionCandidateCount(position._id);
+                  const maxCount = position.maxCandidates;
+                  const isAtMax = currentCount >= maxCount;
+                  const isCurrentPosition =
+                    editingCandidate &&
+                    editingCandidate.positionId === position._id;
+
+                  // Only disable positions at max if we're not editing a candidate in that position
+                  const shouldDisable = isAtMax && !isCurrentPosition;
+
+                  return (
+                    <option
+                      key={position._id}
+                      value={position._id}
+                      disabled={shouldDisable}
+                    >
+                      {position.title}
+                      {isAtMax
+                        ? ` (Max ${maxCount} reached)`
+                        : ` (${currentCount}/${maxCount})`}
+                    </option>
+                  );
+                })}
               </select>
             </div>
 
@@ -983,89 +1143,72 @@ const CandidatesManager: React.FC = () => {
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Voter Category
               </label>
-              <div className="space-y-4">
-                <select
-                  className="w-full p-2 border border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500"
-                  value={
-                    editingCandidate
-                      ? editingCandidate.voterCategory?.type || "all"
-                      : newCandidate.voterCategory?.type || "all"
+              <select
+                className="w-full p-2 border border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500"
+                value={
+                  editingCandidate
+                    ? editingCandidate.voterCategory?.type || "all"
+                    : newCandidate.voterCategory?.type || "all"
+                }
+                onChange={(e) => {
+                  const type = e.target.value as VoterCategory["type"];
+                  if (editingCandidate) {
+                    setEditingCandidate({
+                      ...editingCandidate,
+                      voterCategory: { type, values: [] },
+                    });
+                  } else {
+                    setNewCandidate({
+                      ...newCandidate,
+                      voterCategory: { type, values: [] },
+                    });
                   }
-                  onChange={(e) => {
-                    const type = e.target.value as VoterCategory["type"];
-                    if (editingCandidate) {
-                      setEditingCandidate({
-                        ...editingCandidate,
-                        voterCategory: { type, values: [] },
-                      });
-                    } else {
-                      setNewCandidate({
-                        ...newCandidate,
-                        voterCategory: { type, values: [] },
-                      });
-                    }
-                  }}
-                >
-                  <option value="all">All Voters</option>
-                  <option value="year">Specific Year/Level</option>
-                  <option value="class">Specific Programme/Class</option>
-                  <option value="house">Specific Hall/House</option>
-                </select>
-
-                {/* Fix the conditional rendering here to check the correct state */}
-                {((editingCandidate &&
-                  editingCandidate.voterCategory?.type !== "all") ||
-                  (!editingCandidate &&
-                    newCandidate.voterCategory?.type !== "all")) && (
-                  <div className="space-y-2">
-                    <div className="text-sm font-medium text-gray-700">
-                      Select{" "}
-                      {editingCandidate
-                        ? editingCandidate.voterCategory?.type
-                        : newCandidate.voterCategory?.type}
-                      s:
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      {getAvailableOptions(
-                        editingCandidate?.voterCategory?.type ??
-                          newCandidate.voterCategory?.type ??
-                          "all"
-                      ).map((option) => (
-                        <label
-                          key={option}
-                          className="flex items-center space-x-2"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={
-                              editingCandidate
-                                ? editingCandidate.voterCategory?.values.includes(
-                                    option
-                                  )
-                                : newCandidate.voterCategory?.values.includes(
-                                    option
-                                  )
-                            }
-                            onChange={(e) =>
-                              handleVoterCategoryChange(
-                                editingCandidate?.voterCategory?.type ??
-                                  newCandidate.voterCategory?.type ??
-                                  "all",
-                                option,
-                                e.target.checked
+                }}
+              >
+                <option value="all">All Voters</option>
+                <option value="year">Specific Year/Level</option>
+                <option value="class">Specific Programme/Class</option>
+                <option value="house">Specific Hall/House</option>
+              </select>
+              {/* Add checkboxes for specific values */}
+              {((editingCandidate &&
+                editingCandidate.voterCategory?.type !== "all") ||
+                (!editingCandidate &&
+                  newCandidate.voterCategory?.type !== "all")) && (
+                <div className="space-y-2 mt-2">
+                  {getAvailableOptions(
+                    editingCandidate?.voterCategory?.type ??
+                      newCandidate.voterCategory?.type ??
+                      "all"
+                  ).map((option) => (
+                    <label key={option} className="flex items-center space-x-2">
+                      <input
+                        type="checkbox"
+                        checked={
+                          editingCandidate
+                            ? editingCandidate.voterCategory?.values.includes(
+                                option
                               )
-                            }
-                            className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
-                          />
-                          <span className="text-sm text-gray-700">
-                            {option}
-                          </span>
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
+                            : newCandidate.voterCategory?.values.includes(
+                                option
+                              )
+                        }
+                        onChange={(e) =>
+                          handleVoterCategoryChange(
+                            editingCandidate?.voterCategory?.type ??
+                              newCandidate.voterCategory?.type ??
+                              "all",
+                            option,
+                            e.target.checked
+                          )
+                        }
+                        className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+                      />
+                      <span className="text-sm text-gray-700">{option}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
             </div>
 
             {/* Description */}
@@ -1205,15 +1348,15 @@ const CandidatesManager: React.FC = () => {
               {/* Right side - Action buttons */}
               <div className="flex space-x-2 md:ml-auto">
                 <button
-                  onClick={() => {}}
+                  onClick={handlePrint}
                   className="inline-flex items-center px-3 py-1.5 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                  title="Print candidate list"
+                  title="Print candidates list"
                 >
                   <Printer className="h-4 w-4 mr-1.5" />
                   Print
                 </button>
                 <button
-                  onClick={() => {}}
+                  onClick={handleExportExcel}
                   className="inline-flex items-center px-3 py-1.5 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
                   title="Export to Excel"
                 >

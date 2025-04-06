@@ -17,6 +17,10 @@ const voteSchema = new Schema(
       type: String,
       required: true,
     },
+    positionId: {
+      type: Schema.Types.ObjectId,
+      ref: "Position",
+    },
     candidate: {
       type: Schema.Types.ObjectId,
       ref: "Candidate",
@@ -48,13 +52,25 @@ export const dropVoteUniqueIndex = async () => {
       .toArray();
     if (collections.length > 0) {
       console.log("Attempting to drop problematic index on votes collection");
-      await mongoose.connection.db
-        .collection("votes")
-        .dropIndex("voterId_1_positionId_1_electionId_1");
-      console.log("Successfully dropped problematic index");
+      try {
+        await mongoose.connection.db
+          .collection("votes")
+          .dropIndex("voter_1_election_1_position_1");
+        console.log("Successfully dropped problematic index");
+      } catch (err) {
+        // Try dropping just the voter_1_position_1 index if that's what exists
+        try {
+          await mongoose.connection.db
+            .collection("votes")
+            .dropIndex("voter_1_position_1");
+          console.log("Successfully dropped voter_1_position_1 index");
+        } catch (innerErr) {
+          console.log("Index drop error (might not exist):", innerErr.message);
+        }
+      }
     }
   } catch (error) {
-    console.log("Index drop error (might not exist):", error.message);
+    console.log("Collection check error:", error.message);
   }
 };
 

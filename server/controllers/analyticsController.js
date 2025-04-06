@@ -9,6 +9,7 @@ import mongoose from "mongoose";
 export const getVotingPatterns = async (req, res) => {
   try {
     console.log("Generating voting patterns analysis...");
+    console.log("Query parameters:", req.query);
 
     // Get current election
     const currentElection = await Election.findOne({ isCurrent: true });
@@ -16,13 +17,45 @@ export const getVotingPatterns = async (req, res) => {
       return res.status(404).json({ message: "No active election found" });
     }
 
-    // Get all votes for the current election
-    const votes = await Vote.find({ election: currentElection._id })
+    // Build date filters
+    const dateFilters = {};
+    if (req.query.from) {
+      dateFilters.timestamp = { $gte: new Date(req.query.from) };
+    }
+    if (req.query.to) {
+      if (dateFilters.timestamp) {
+        // Add end time to include the entire day
+        dateFilters.timestamp.$lte = new Date(req.query.to + "T23:59:59.999Z");
+      } else {
+        dateFilters.timestamp = {
+          $lte: new Date(req.query.to + "T23:59:59.999Z"),
+        };
+      }
+    }
+
+    console.log("Date filters:", dateFilters);
+
+    // Position filter
+    const positionFilter = {};
+    if (req.query.position && req.query.position !== "all") {
+      const position = await Position.findById(req.query.position);
+      if (position) {
+        positionFilter.position = position.title;
+        console.log("Position filter applied:", position.title);
+      }
+    }
+
+    // Get all votes for the current election with filters
+    const votes = await Vote.find({
+      election: currentElection._id,
+      ...dateFilters,
+      ...positionFilter,
+    })
       .populate("voter")
       .populate("candidate")
       .lean();
 
-    console.log(`Found ${votes.length} votes for analysis`);
+    console.log(`Found ${votes.length} votes for analysis after filtering`);
 
     if (!votes.length) {
       return res.status(200).json({

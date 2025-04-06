@@ -146,6 +146,19 @@ const YearManager: React.FC = () => {
     }
   };
 
+  const getAuthHeaders = () => {
+    const token = localStorage.getItem("token");
+    if (!token) {
+      console.error("Authentication token not found in localStorage");
+      throw new Error("You are not logged in. Please log in and try again.");
+    }
+
+    return {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    };
+  };
+
   const handleAddYear = async () => {
     if (!newYear.name) {
       setNotification({
@@ -158,12 +171,7 @@ const YearManager: React.FC = () => {
     try {
       setIsLoading(true);
 
-      // Get authentication token
-      const token = localStorage.getItem("token");
-      const headers = {
-        "Content-Type": "application/json",
-        Authorization: token ? `Bearer ${token}` : "",
-      };
+      const headers = getAuthHeaders();
 
       const response = await fetch(
         `${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/years`,
@@ -180,19 +188,13 @@ const YearManager: React.FC = () => {
       }
 
       const addedYear = await response.json();
-      setYears([...years, addedYear]);
 
-      setNewYear({
-        name: "",
-        description: "",
-        active: false,
-      });
+      // Refresh the table by fetching the updated list of years
+      await fetchYears();
 
+      setNewYear({ name: "", description: "", active: false });
       setShowAddForm(false);
-      setNotification({
-        type: "success",
-        message: "Year added successfully",
-      });
+      setNotification({ type: "success", message: "Year added successfully" });
     } catch (error: any) {
       setNotification({
         type: "error",
@@ -218,12 +220,7 @@ const YearManager: React.FC = () => {
     try {
       setIsLoading(true);
 
-      // Get authentication token
-      const token = localStorage.getItem("token");
-      const headers = {
-        "Content-Type": "application/json",
-        Authorization: token ? `Bearer ${token}` : "",
-      };
+      const headers = getAuthHeaders();
 
       const response = await fetch(
         `${import.meta.env.VITE_API_URL || "http://localhost:5000"}/api/years/${
@@ -243,9 +240,21 @@ const YearManager: React.FC = () => {
 
       const updatedYear = await response.json();
 
-      setYears(
-        years.map((year) => (year._id === updatedYear._id ? updatedYear : year))
-      );
+      // Update the state to reflect the new active year
+      if (updatedYear.active) {
+        setYears((prevYears) =>
+          prevYears.map((year) => ({
+            ...year,
+            active: year._id === updatedYear._id,
+          }))
+        );
+      } else {
+        setYears((prevYears) =>
+          prevYears.map((year) =>
+            year._id === updatedYear._id ? updatedYear : year
+          )
+        );
+      }
 
       setEditingYear(null);
       setNotification({
@@ -280,12 +289,8 @@ const YearManager: React.FC = () => {
     try {
       setIsLoading(true);
 
-      // Get authentication token
-      const token = localStorage.getItem("token");
-      const headers = {
-        "Content-Type": "application/json",
-        Authorization: token ? `Bearer ${token}` : "",
-      };
+      // Get authentication headers - FIXED
+      const headers = getAuthHeaders();
 
       const response = await fetch(
         `${
@@ -293,7 +298,7 @@ const YearManager: React.FC = () => {
         }/api/years/${id}`,
         {
           method: "DELETE",
-          headers,
+          headers: headers,
         }
       );
 
@@ -322,12 +327,8 @@ const YearManager: React.FC = () => {
     try {
       setIsLoading(true);
 
-      // Get authentication token
-      const token = localStorage.getItem("token");
-      const headers = {
-        "Content-Type": "application/json",
-        Authorization: token ? `Bearer ${token}` : "",
-      };
+      // Get authentication headers - FIXED
+      const headers = getAuthHeaders();
 
       const response = await fetch(
         `${
@@ -335,7 +336,7 @@ const YearManager: React.FC = () => {
         }/api/years/${id}/active`,
         {
           method: "PUT",
-          headers,
+          headers: headers,
           body: JSON.stringify({ active: true }),
         }
       );
@@ -589,14 +590,22 @@ const YearManager: React.FC = () => {
                 className="w-full p-2 border border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500"
                 value={editingYear ? editingYear.name : newYear.name}
                 onChange={(e) => {
-                  if (editingYear) {
-                    setEditingYear({ ...editingYear, name: e.target.value });
-                  } else {
-                    setNewYear({ ...newYear, name: e.target.value });
+                  // Only allow numeric input for year field
+                  const value = e.target.value;
+                  // Check if input contains only numbers
+                  if (value === "" || /^[0-9]+$/.test(value)) {
+                    if (editingYear) {
+                      setEditingYear({ ...editingYear, name: value });
+                    } else {
+                      setNewYear({ ...newYear, name: value });
+                    }
                   }
                 }}
                 placeholder="Enter year (e.g., 2026)"
               />
+              <p className="mt-1 text-xs text-gray-500">
+                Please enter only numbers (e.g., 2025, 2026)
+              </p>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">

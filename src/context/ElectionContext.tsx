@@ -169,44 +169,42 @@ export const ElectionProvider: React.FC<{ children: ReactNode }> = ({
   };
 
   // Update the function that fetches election status
-  const fetchElectionStatus = async () => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/elections/status`);
+  useEffect(() => {
+    const fetchElectionStatus = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/elections/status`);
+        const data: any = await response.json();
 
-      if (!response.ok) {
-        throw new Error(`Failed to fetch election status: ${response.status}`);
+        // Map "inactive" to "not-started" to match the expected type
+        const mappedStatus: "not-started" | "active" | "ended" =
+          data.status === "inactive" ? "not-started" : data.status;
+
+        setElectionStatus(mappedStatus);
+      } catch (error) {
+        console.error("Error fetching election status:", error);
       }
+    };
 
-      const data = await response.json();
+    // Poll every 10 seconds
+    const intervalId = setInterval(fetchElectionStatus, 10000);
 
-      // Important: Respect the isActive flag from the server
-      setElectionStatus(
-        data.isActive ? "active" : data.status || "not-started"
-      );
-    } catch (error) {
-      console.error("Error fetching election status:", error); // Keep error logs
-      // Set a default value instead of null
-      setElectionStatus("not-started");
+    // Cleanup interval on component unmount
+    return () => clearInterval(intervalId);
+  }, []);
+
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      await fetchElectionStats();
+    } catch (err) {
+      console.error("API error:", err);
+      setError("Unable to fetch election data. Please try again later.");
     } finally {
       setLoading(false);
     }
   };
 
-  // Initial fetch of election data
   useEffect(() => {
-    const fetchData = async () => {
-      setLoading(true);
-      try {
-        await fetchElectionStatus();
-        await fetchElectionStats();
-      } catch (err) {
-        console.error("API error:", err);
-        setError("Unable to fetch election data. Please try again later.");
-      } finally {
-        setLoading(false);
-      }
-    };
-
     fetchData();
   }, []);
 
@@ -223,7 +221,6 @@ export const ElectionProvider: React.FC<{ children: ReactNode }> = ({
 
       if (diff <= 0) {
         setTimeRemaining("Election has ended");
-        fetchElectionStatus(); // Re-fetch status as the election state might have changed
         return;
       }
 

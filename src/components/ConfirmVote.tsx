@@ -130,6 +130,17 @@ const ConfirmVote: React.FC = () => {
         throw new Error("Voter ID not found. Please log in again.");
       }
 
+      console.log("Submitting vote with data:", {
+        voterId,
+        selections: Object.values(selectedCandidates).map((candidate) => ({
+          positionId: candidate.positionId || candidate.position,
+          candidateId: candidate.id || candidate._id,
+        })),
+        abstentions: Object.keys(noneSelected).filter(
+          (position) => noneSelected[position]
+        ),
+      });
+
       const response = await fetch(`${apiUrl}/api/votes/submit`, {
         method: "POST",
         headers: {
@@ -138,7 +149,7 @@ const ConfirmVote: React.FC = () => {
         body: JSON.stringify({
           voterId: voterId,
           selections: Object.values(selectedCandidates).map((candidate) => ({
-            positionId: candidate.positionId,
+            positionId: candidate.positionId || candidate.position,
             candidateId: candidate.id || candidate._id, // Handle both id and _id
           })),
           abstentions: Object.keys(noneSelected).filter(
@@ -147,21 +158,26 @@ const ConfirmVote: React.FC = () => {
         }),
       });
 
-      const data = await response.json();
-
       if (!response.ok) {
+        const data = await response.json();
+        console.error("Vote submission error response:", data);
         throw new Error(data.message || "Error submitting vote");
       }
 
-      navigate("/vote-success", {
-        state: {
-          voteToken: data.voteToken,
-          votedAt: data.votedAt,
-        },
-      });
-    } catch (error: any) {
+      const data = await response.json();
+      console.log("Vote submitted successfully:", data);
+
+      // Set success and token
+      setVoteToken(data.voteToken);
+      setSuccess(true);
+    } catch (error) {
       console.error("Vote submission error:", error);
-      setError(error.message || "Failed to submit vote. Please try again.");
+      if (error instanceof Error) {
+        setError(error.message || "Failed to submit vote. Please try again.");
+      } else {
+        setError("Failed to submit vote. Please try again.");
+      }
+    } finally {
       setIsSubmitting(false);
     }
   };
@@ -417,32 +433,32 @@ const ConfirmVote: React.FC = () => {
 
             {!success && (
               <div className="bg-gray-50 p-6 border-t border-gray-200 flex flex-col sm:flex-row justify-between items-center gap-4 sm:gap-0">
-              <button
-                onClick={handleGoBack}
-                className="bg-yellow-400 text-black hover:bg-yellow-300 font-medium py-2 px-4 sm:py-2.5 sm:px-5 rounded-lg inline-flex items-center transition-colors duration-300 font-sans shadow-sm w-full sm:w-auto"
-                disabled={loading}
-              >
-                <ArrowLeft className="mr-2" size={18} />
-                Back to Selection
-              </button>
-              <button
-                onClick={handleSubmitVote}
-                disabled={loading}
-                className="bg-gradient-to-r from-green-600 to-green-500 hover:from-green-700 hover:to-green-600 text-white font-medium py-2 px-4 sm:py-2.5 sm:px-6 rounded-lg inline-flex items-center shadow-md hover:shadow-lg transition-all duration-300 font-sans tracking-wide w-full sm:w-auto"
-              >
-                {loading ? (
-                  <>
-                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
-                    Processing...
-                  </>
-                ) : (
-                  <>
-                    Submit Vote
-                    <ChevronRight className="ml-2" size={18} />
-                  </>
-                )}
-              </button>
-            </div>
+                <button
+                  onClick={handleGoBack}
+                  className="bg-yellow-400 text-black hover:bg-yellow-300 font-medium py-2 px-4 sm:py-2.5 sm:px-5 rounded-lg inline-flex items-center transition-colors duration-300 font-sans shadow-sm w-full sm:w-auto"
+                  disabled={loading}
+                >
+                  <ArrowLeft className="mr-2" size={18} />
+                  Back to Selection
+                </button>
+                <button
+                  onClick={handleSubmitVote}
+                  disabled={loading}
+                  className="bg-gradient-to-r from-green-600 to-green-500 hover:from-green-700 hover:to-green-600 text-white font-medium py-2 px-4 sm:py-2.5 sm:px-6 rounded-lg inline-flex items-center shadow-md hover:shadow-lg transition-all duration-300 font-sans tracking-wide w-full sm:w-auto"
+                >
+                  {loading ? (
+                    <>
+                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
+                      Processing...
+                    </>
+                  ) : (
+                    <>
+                      Submit Vote
+                      <ChevronRight className="ml-2" size={18} />
+                    </>
+                  )}
+                </button>
+              </div>
             )}
           </div>
 

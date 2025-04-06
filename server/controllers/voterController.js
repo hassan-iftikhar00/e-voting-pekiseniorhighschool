@@ -25,7 +25,7 @@ export const createVoter = async (req, res) => {
     const { name, voterId, gender, class: className, year, house } = req.body;
 
     // Validation
-    if (!name || !voterId || !className || !year || !house) {
+    if (!name || !className || !year || !house) {
       return res.status(400).json({ message: "All fields are required" });
     }
 
@@ -35,23 +35,17 @@ export const createVoter = async (req, res) => {
       return res.status(404).json({ message: "No active election found" });
     }
 
-    // Check if voter already exists
-    const existingVoter = await Voter.findOne({
-      voterId,
-      electionId: currentElection._id,
-    });
+    // Generate a standardized voter ID (matching the model's format)
+    const randomDigits = Math.floor(10000 + Math.random() * 90000);
+    const newVoterId = `VOTER${randomDigits}`;
 
-    if (existingVoter) {
-      return res.status(400).json({ message: "Voter ID already exists" });
-    }
-
-    // Create new voter
+    // Create new voter with standardized ID
     const voter = new Voter({
       name,
-      voterId,
-      gender: gender, // Include gender with default
+      voterId: newVoterId, // Use the standardized format
+      gender: gender,
       class: className,
-      year, // The year value is passed from the request body
+      year,
       house,
       electionId: currentElection._id,
     });
@@ -169,72 +163,172 @@ export const deleteVoter = async (req, res) => {
 // Add bulk voters from CSV
 export const bulkAddVoters = async (req, res) => {
   try {
-    const voters = req.body;
-    if (!Array.isArray(voters) || voters.length === 0) {
-      return res.status(400).json({ message: "Invalid voter data" });
+    console.log("==== BULK ADD VOTERS CONTROLLER ====");
+    console.log("Request reached controller function");
+
+    const { voters } = req.body;
+
+    if (!voters) {
+      console.log("No voters array found in request body");
+      return res.status(400).json({
+        message: "No valid voter data provided - voters array is missing",
+        success: 0,
+        failed: 0,
+        errors: ["No voters array found in request"],
+      });
     }
+
+    if (!Array.isArray(voters)) {
+      console.log("Voters is not an array:", typeof voters);
+      return res.status(400).json({
+        message: "Invalid voter data - voters is not an array",
+        success: 0,
+        failed: 0,
+        errors: ["Invalid data format: voters must be an array"],
+      });
+    }
+
+    if (voters.length === 0) {
+      console.log("Voters array is empty");
+      return res.status(400).json({
+        message: "No voter data provided - empty array",
+        success: 0,
+        failed: 0,
+        errors: ["No voter data found in CSV file"],
+      });
+    }
+
+    console.log("Number of voters to import:", voters.length);
+    console.log("First voter sample:", JSON.stringify(voters[0], null, 2));
 
     // Get current election
     const currentElection = await Election.findOne({ isCurrent: true });
     if (!currentElection) {
-      return res.status(404).json({ message: "No active election found" });
+      console.log("No active election found");
+      return res.status(400).json({
+        message: "No active election found",
+        success: 0,
+        failed: voters.length,
+        errors: ["No active election found for adding voters"],
+      });
     }
 
-    // Process each voter
+    console.log("Found current election:", currentElection._id);
+
     const results = {
-      added: 0,
-      errors: 0,
-      duplicates: 0,
+      success: 0,
+      failed: 0,
+      errors: [],
     };
 
+    // Track for duplicate handling
+    const processedNames = new Set();
+
+    // Process each voter with improved logging
+    console.log("Starting to process voters...");
     for (const voterData of voters) {
       try {
-        // Check required fields
-        if (
-          !voterData.name ||
-          !voterData.voterId ||
-          !voterData.class ||
-          !voterData.year || // Year is a required field
-          !voterData.house
-        ) {
-          results.errors++;
+        // Find all possible keys case-insensitively
+        const keys = Object.keys(voterData);
+        console.log("Voter data keys:", keys);
+
+        const getValueCaseInsensitive = (targetKey) => {
+          const key = keys.find(
+            (k) => k.toLowerCase() === targetKey.toLowerCase()
+          );
+          return key ? voterData[key].trim() : "";
+        };
+
+        // Get data using case-insensitive keys
+        const name = getValueCaseInsensitive("name");
+        const gender = getValueCaseInsensitive("gender");
+        const className = getValueCaseInsensitive("class");
+        const year = getValueCaseInsensitive("year");
+        const house = getValueCaseInsensitive("house");
+
+        console.log(
+          `Processing voter: ${name}, gender=${gender}, class=${className}, year=${year}, house=${house}`
+        );
+
+        // Validate required fields with better error details
+        if (!name || !gender || !className || !year || !house) {
+          const missingFields = [];
+          if (!name) missingFields.push("name");
+          if (!gender) missingFields.push("gender");
+          if (!className) missingFields.push("class");
+          if (!year) missingFields.push("year");
+          if (!house) missingFields.push("house");
+
+          const errorMsg = `Missing required fields for voter: ${missingFields.join(
+            ", "
+          )}`;
+          console.log(errorMsg);
+
+          results.failed++;
+          results.errors.push(errorMsg);
           continue;
         }
 
-        // Check for duplicates
-        const existingVoter = await Voter.findOne({
-          voterId: voterData.voterId,
-          electionId: currentElection._id,
-        });
-
-        if (existingVoter) {
-          results.duplicates++;
-          continue;
+        // Fix gender normalization to be more tolerant
+        let normalizedGender = "Male"; // Default to Male
+        if (gender.toLowerCase().includes("f")) {
+          normalizedGender = "Female";
         }
 
-        // Create voter with all fields including year
-        const voter = new Voter({
-          ...voterData,
+        // Generate a voterId manually with standardized format
+        const randomDigits = Math.floor(10000 + Math.random() * 90000);
+        const voterId = `VOTER${randomDigits}`;
+
+        // Create voter with proper debugging and manual voterId
+        console.log(
+          `Creating new voter: ${name} with gender ${normalizedGender} and voterId ${voterId}`
+        );
+
+        const newVoter = new Voter({
+          name,
+          gender: normalizedGender,
+          class: className,
+          year,
+          house,
+          voterId,
+          hasVoted: false,
+          votedAt: null,
           electionId: currentElection._id,
         });
 
-        await voter.save();
-        results.added++;
+        const savedVoter = await newVoter.save();
+        console.log(`Successfully saved voter with ID: ${savedVoter._id}`);
+
+        // Update election counts
+        currentElection.totalVoters++;
+        await currentElection.save();
+
+        results.success++;
       } catch (err) {
-        results.errors++;
+        console.error("Error processing voter row:", err);
+        results.failed++;
+        results.errors.push(`Error processing row: ${err.message}`);
       }
     }
 
-    // Update election total voters count
-    currentElection.totalVoters += results.added;
-    await currentElection.save();
+    console.log("Import complete. Results:", JSON.stringify(results, null, 2));
 
-    res.status(200).json({
-      message: "Bulk import completed",
-      results,
+    // Return success response
+    return res.status(200).json({
+      message: `Imported ${results.success} voters successfully with ${results.failed} failures`,
+      success: results.success,
+      failed: results.failed,
+      errors: results.errors,
     });
   } catch (error) {
-    res.status(500).json({ message: "Server error", error: error.message });
+    console.error("Bulk import error:", error);
+    return res.status(500).json({
+      message: "Server error during import",
+      error: error.message,
+      success: 0,
+      failed: req.body.voters?.length || 0,
+      errors: [error.message],
+    });
   }
 };
 

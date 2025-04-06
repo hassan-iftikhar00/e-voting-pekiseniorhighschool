@@ -3,7 +3,7 @@ import Class from "../models/Class.js";
 // Get all classes
 export const getAllClasses = async (req, res) => {
   try {
-    const classes = await Class.find().sort({ name: 1 });
+    const classes = await Class.find().sort({ name: 1 }); // Sort by name
     res.status(200).json(classes);
   } catch (error) {
     res.status(500).json({ message: "Server error", error: error.message });

@@ -170,9 +170,16 @@ const PositionsManager: React.FC = () => {
         Authorization: token ? `Bearer ${token}` : "",
       };
 
+      // Automatically set the order to the last position
+      const maxOrder = Math.max(...positions.map((p) => p.order || 0), 0);
+      const positionToAdd = {
+        ...newPosition,
+        order: maxOrder + 1, // Set order to the last position
+      };
+
       const response = await axios.post(
         `${apiUrl}/api/positions`,
-        newPosition,
+        positionToAdd,
         { headers }
       );
 
@@ -185,7 +192,7 @@ const PositionsManager: React.FC = () => {
         isActive: true,
         maxCandidates: 5,
         maxSelections: 1,
-        order: Math.max(...positions.map((p) => p.order || 0), 0) + 1,
+        order: maxOrder + 2, // Prepare for the next addition
       });
 
       setShowAddForm(false);
@@ -348,6 +355,114 @@ const PositionsManager: React.FC = () => {
       setIsLoading(false);
       setTimeout(() => setNotification(null), 3000);
     }
+  };
+
+  // Handle print function
+  const handlePrint = () => {
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) {
+      alert("Please allow pop-ups to print");
+      return;
+    }
+
+    const styles = `
+      <style>
+        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; }
+        h1 { text-align: center; color: #4338ca; margin-bottom: 20px; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 30px; }
+        th { background-color: #f3f4f6; color: #374151; font-weight: bold; text-align: left; padding: 12px; }
+        td { padding: 10px; border-bottom: 1px solid #e5e7eb; }
+        tr:nth-child(even) { background-color: #f9fafb; }
+        .status-active { color: #047857; font-weight: bold; }
+        .status-inactive { color: #b91c1c; font-weight: bold; }
+        .footer { margin-top: 20px; text-align: center; font-size: 12px; color: #6b7280; }
+      </style>
+    `;
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Positions List</title>
+          ${styles}
+        </head>
+        <body>
+          <h1>Positions List</h1>
+          
+          <table>
+            <thead>
+              <tr>
+                <th>S/N</th>
+                <th>Title</th>
+                <th>Description</th>
+                <th>Max Candidates</th>
+                <th>Max Selections</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${positions
+                .map(
+                  (position, index) => `
+                <tr>
+                  <td>${index + 1}</td>
+                  <td>${position.title}</td>
+                  <td>${position.description || "-"}</td>
+                  <td>${position.maxCandidates}</td>
+                  <td>${position.maxSelections}</td>
+                  <td class="${
+                    position.isActive ? "status-active" : "status-inactive"
+                  }">
+                    ${position.isActive ? "Active" : "Inactive"}
+                  </td>
+                </tr>
+              `
+                )
+                .join("")}
+            </tbody>
+          </table>
+          
+          <div class="footer">
+            <p>Printed on ${new Date().toLocaleString()}</p>
+          </div>
+        </body>
+      </html>
+    `);
+
+    printWindow.document.close();
+
+    setTimeout(() => {
+      printWindow.print();
+    }, 500);
+  };
+
+  // Handle export to Excel (CSV)
+  const handleExportExcel = () => {
+    // Create CSV content
+    let csvContent =
+      "S/N,Title,Description,Max Candidates,Max Selections,Status\n";
+
+    positions.forEach((position, index) => {
+      csvContent += `${index + 1},"${position.title}","${
+        position.description || ""
+      }",${position.maxCandidates},${position.maxSelections},"${
+        position.isActive ? "Active" : "Inactive"
+      }"\n`;
+    });
+
+    // Create a blob and download link
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute(
+      "download",
+      `positions_list_${new Date().toISOString().split("T")[0]}.csv`
+    );
+    link.style.visibility = "hidden";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   return (
@@ -686,21 +801,15 @@ const PositionsManager: React.FC = () => {
             {canAddPosition && (
               <>
                 <button
-                  onClick={() => {
-                    // Handle print functionality
-                    alert("Print functionality would be here");
-                  }}
+                  onClick={handlePrint}
                   className="inline-flex items-center px-3 py-1.5 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-                  title="Print position list"
+                  title="Print positions list"
                 >
                   <Printer className="h-4 w-4 mr-1.5" />
                   Print
                 </button>
                 <button
-                  onClick={() => {
-                    // Handle export functionality
-                    alert("Export functionality would be here");
-                  }}
+                  onClick={handleExportExcel}
                   className="inline-flex items-center px-3 py-1.5 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
                   title="Export to Excel"
                 >

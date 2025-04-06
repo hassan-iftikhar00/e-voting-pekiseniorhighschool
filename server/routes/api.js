@@ -21,6 +21,8 @@ import {
 import { submitVote } from "../controllers/voteController.js";
 import User from "../models/User.js"; // Add this import for the User model
 import Setting from "../models/Setting.js"; // Add this import for the Setting model
+import Election from "../models/Election.js"; // Add this import for the Election model
+import { getCandidatesForVoter } from "../controllers/candidateController.js";
 
 const router = express.Router();
 
@@ -121,12 +123,56 @@ router.post(
   checkPermission({ page: "voters", action: "add" }),
   voterController.createVoter
 );
+
+// Add debug middleware to log requests for bulk voter import
 router.post(
   "/voters/bulk",
+  (req, res, next) => {
+    console.log("==== BULK IMPORT DEBUG ====");
+    console.log("Request body received:", JSON.stringify(req.body, null, 2));
+    console.log("Voters array length:", req.body.voters?.length || 0);
+
+    if (req.body.voters && req.body.voters.length > 0) {
+      console.log(
+        "First voter sample:",
+        JSON.stringify(req.body.voters[0], null, 2)
+      );
+    } else {
+      console.log("No voter data found in request body");
+    }
+
+    // Continue to the actual controller
+    next();
+  },
   authenticateToken,
   checkPermission({ page: "voters", action: "add" }),
   voterController.bulkAddVoters
 );
+
+// Debug the bulk voters endpoint by adding a test route
+router.get("/voters/bulk-test", async (req, res) => {
+  try {
+    const currentElection = await Election.findOne({ isCurrent: true });
+    if (!currentElection) {
+      return res.status(400).json({
+        message: "No active election found",
+        hint: "Run the diagnostics.js script to create a test election",
+      });
+    }
+
+    return res.status(200).json({
+      message: "Endpoint is working, active election exists",
+      electionId: currentElection._id,
+      electionTitle: currentElection.title,
+    });
+  } catch (error) {
+    console.error("Bulk test error:", error);
+    return res
+      .status(500)
+      .json({ message: "Test route error", error: error.message });
+  }
+});
+
 router.put(
   "/voters/:id",
   authenticateToken,
@@ -200,6 +246,7 @@ router.delete(
   checkPermission({ page: "candidates", action: "delete" }),
   candidateController.deleteCandidate
 );
+router.get("/candidates/for-voter", getCandidatesForVoter);
 
 // Year routes
 router.get("/years", yearController.getAllYears);
@@ -359,6 +406,121 @@ router.get(
   checkPermission({ page: "analytics", action: "view" }),
   analyticsController.getPositionResults
 );
+
+// Simple test endpoint to check which port is active - NO AUTH REQUIRED
+router.get("/server-info", (req, res) => {
+  res.json({
+    status: "online",
+    port: process.env.PORT || 5000,
+    version: "1.0",
+    timestamp: new Date().toISOString(),
+  });
+});
+
+// Add a simplified version of the bulk import endpoint
+router.post("/voters/bulk-simple", async (req, res) => {
+  try {
+    console.log("==== BULK SIMPLE IMPORT ENDPOINT ====");
+
+    // Validate request structure
+    if (!req.body.voters || !Array.isArray(req.body.voters)) {
+      return res.status(400).json({
+        message: "Invalid request format - missing voters array",
+        success: 0,
+        failed: 0,
+        errors: ["Request must include a voters array"],
+      });
+    }
+
+    const { voters } = req.body;
+    console.log(`Processing ${voters.length} voters in simplified endpoint`);
+
+    // Find current election
+    const election = await mongoose
+      .model("Election")
+      .findOne({ isCurrent: true });
+    if (!election) {
+      return res.status(400).json({
+        message: "No active election found",
+        success: 0,
+        failed: voters.length,
+        errors: ["No active election found"],
+      });
+    }
+
+    // Simple counter for results
+    const results = {
+      success: 0,
+      failed: 0,
+      errors: [],
+    };
+
+    // Create voters with minimal processing
+    const Voter = mongoose.model("Voter");
+
+    for (const voterData of voters) {
+      try {
+        // Basic validation
+        if (
+          !voterData.name ||
+          !voterData.gender ||
+          !voterData.class ||
+          !voterData.year ||
+          !voterData.house
+        ) {
+          results.failed++;
+          results.errors.push(
+            `Missing required fields for voter: ${JSON.stringify(voterData)}`
+          );
+          continue;
+        }
+
+        // Normalize gender
+        const normalizedGender = voterData.gender.toLowerCase().includes("f")
+          ? "Female"
+          : "Male";
+
+        // Create voter
+        const newVoter = new Voter({
+          name: voterData.name,
+          gender: normalizedGender,
+          class: voterData.class,
+          year: voterData.year,
+          house: voterData.house,
+          hasVoted: false,
+          votedAt: null,
+          electionId: election._id,
+        });
+
+        await newVoter.save();
+        results.success++;
+      } catch (error) {
+        results.failed++;
+        results.errors.push(error.message);
+      }
+    }
+
+    // Update election counter
+    election.totalVoters += results.success;
+    await election.save();
+
+    return res.status(200).json({
+      message: `Imported ${results.success} voters successfully with ${results.failed} failures`,
+      success: results.success,
+      failed: results.failed,
+      errors: results.errors,
+    });
+  } catch (error) {
+    console.error("Bulk simple import error:", error);
+    return res.status(500).json({
+      message: "Server error during import",
+      error: error.message,
+      success: 0,
+      failed: req.body?.voters?.length || 0,
+      errors: [error.message],
+    });
+  }
+});
 
 // Protected Routes - all routes below this middleware require authentication
 router.use(authenticateToken);

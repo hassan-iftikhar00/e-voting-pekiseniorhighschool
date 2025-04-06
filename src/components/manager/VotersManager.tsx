@@ -17,7 +17,8 @@ import {
   ArrowUp,
   ArrowDown,
   KeyRound,
-  Upload, // Add this import
+  Upload,
+  FileText,
 } from "lucide-react";
 import { useUser } from "../../context/UserContext";
 
@@ -75,7 +76,7 @@ const VotersManager: React.FC = () => {
   const [showColumnSelector, setShowColumnSelector] = useState(false);
   const columnSelectorRef = useRef<HTMLDivElement>(null);
   const [isLoading, setIsLoading] = useState(false);
-  const [showBulkImport, setShowBulkImport] = useState(false); // Add this state variable
+  const [showBulkImport, setShowBulkImport] = useState(false);
 
   // Add state for dynamic data
   const [availableClasses, setAvailableClasses] = useState<Class[]>([]);
@@ -98,11 +99,29 @@ const VotersManager: React.FC = () => {
     name: "",
     gender: "",
     class: "",
-    year: "", // Added field for year
-    house: "", // Added field for house
+    year: "",
+    house: "",
     hasVoted: false,
     votedAt: null,
   });
+
+  // Import functionality state
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importProgress, setImportProgress] = useState(0);
+  const [importResults, setImportResults] = useState<{
+    total: number;
+    success: number;
+    failed: number;
+    errors: string[];
+  }>({
+    total: 0,
+    success: 0,
+    failed: 0,
+    errors: [],
+  });
+  const [isImporting, setIsImporting] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Close column selector when clicking outside
   useEffect(() => {
@@ -616,6 +635,310 @@ const VotersManager: React.FC = () => {
     setEditingVoter(voter);
   };
 
+  // Open file picker dialog
+  const handleImportClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  // Handle file selection
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.type === "text/csv" || file.name.endsWith(".csv")) {
+        // Reset all import-related state before starting a new import
+        setImportFile(file);
+        setImportProgress(0);
+        setImportResults({
+          total: 0,
+          success: 0,
+          failed: 0,
+          errors: [],
+        });
+        setIsImporting(false);
+        setShowImportModal(true);
+      } else {
+        setNotification({
+          type: "error",
+          message: "Please select a CSV file.",
+        });
+      }
+    }
+  };
+
+  // Parse CSV file
+  const parseCSV = (text: string): any[] => {
+    try {
+      // Remove any BOM characters or invisible Unicode characters
+      text = text.replace(/^\uFEFF/, "");
+
+      // Split into lines and remove empty lines
+      const lines = text
+        .split(/\r?\n/)
+        .filter((line) => line.trim().length > 0);
+
+      if (lines.length === 0) {
+        throw new Error("CSV file is empty");
+      }
+
+      console.log("Original CSV lines:", lines);
+      let headerLine = lines[0];
+
+      // Detect the separator by analyzing the first line
+      let separator = ","; // Default to comma now instead of tab
+      if (headerLine.includes("\t")) {
+        separator = "\t";
+      } else if (headerLine.includes(";")) {
+        separator = ";";
+      }
+
+      console.log(`Using separator: "${separator}"`);
+
+      // Clean potential line numbers from the start of each line
+      const cleanLines = lines.map((line) => {
+        // Remove line numbers that might appear at the start (e.g., "1 Name")
+        return line.replace(/^\d+\s+/, "");
+      });
+
+      console.log("Cleaned lines:", cleanLines);
+      headerLine = cleanLines[0];
+
+      // Process headers - trim and normalize
+      const headers = headerLine
+        .split(separator)
+        .map((h) => h.trim().toLowerCase()) // Normalize all headers to lowercase
+        .filter((h) => h.length > 0);
+
+      console.log("Detected headers:", headers);
+
+      // Check for required columns (case-insensitive)
+      const requiredColumnsLower = ["name", "gender", "class", "year", "house"];
+      const missingColumns = requiredColumnsLower.filter(
+        (col) => !headers.includes(col)
+      );
+
+      if (missingColumns.length > 0) {
+        console.error("Missing required columns:", missingColumns);
+        console.error("Available headers:", headers);
+        throw new Error(
+          `Missing required columns: ${missingColumns.join(", ")}`
+        );
+      }
+
+      // Process data rows (skip header)
+      const data = [];
+      for (let i = 1; i < cleanLines.length; i++) {
+        const values = cleanLines[i].split(separator).map((v) => v.trim());
+
+        // Make sure we have enough values
+        if (values.length < headers.length) {
+          console.warn(
+            `Row ${i} has fewer values than headers, padding with empty strings`
+          );
+          while (values.length < headers.length) {
+            values.push("");
+          }
+        }
+
+        // Create an object with header keys and row values
+        const rowData: Record<string, string> = {};
+        headers.forEach((header, index) => {
+          if (index < values.length) {
+            rowData[header] = values[index];
+          } else {
+            rowData[header] = "";
+          }
+        });
+
+        console.log(`Row ${i} data:`, rowData);
+        data.push(rowData);
+      }
+
+      console.log(`Parsed ${data.length} rows of data`);
+      return data;
+    } catch (error) {
+      console.error("CSV parsing error:", error);
+      throw error;
+    }
+  };
+
+  // Start import process
+  const handleStartImport = async () => {
+    if (!importFile) return;
+
+    setIsImporting(true);
+    setImportProgress(0);
+    setImportResults({
+      total: 0,
+      success: 0,
+      failed: 0,
+      errors: [],
+    });
+
+    try {
+      // Read file
+      const text = await importFile.text();
+      console.log("Raw CSV content:", text.substring(0, 500));
+
+      // Parse CSV
+      const data = parseCSV(text);
+
+      if (data.length === 0) {
+        throw new Error("No valid data found in the CSV file");
+      }
+
+      setImportProgress(25);
+      setImportResults((prev) => ({ ...prev, total: data.length }));
+
+      // Log the first row to verify structure
+      console.log("Sample data row:", data[0]);
+      console.log("Complete parsed data:", data);
+
+      // Get token
+      const token = localStorage.getItem("token");
+      if (!token) {
+        throw new Error("Authentication token not found");
+      }
+
+      setImportProgress(50);
+
+      // Prepare request payload
+      const payload = { voters: data };
+      console.log(
+        "Sending payload to server:",
+        JSON.stringify(payload, null, 2)
+      );
+
+      // Try multiple ports if needed
+      const primaryPort = 5000;
+      const fallbackPort = 50001;
+      let apiBaseUrl = `http://localhost:${primaryPort}`;
+
+      // First try the default API URL
+      const defaultUrl = import.meta.env.VITE_API_URL || apiBaseUrl;
+      console.log("Trying primary API URL:", defaultUrl);
+
+      try {
+        // Try to connect to the server on the primary URL
+        const serverInfoResponse = await fetch(
+          `${defaultUrl}/api/server-info`,
+          {
+            method: "GET",
+            headers: { "Content-Type": "application/json" },
+          }
+        );
+
+        if (!serverInfoResponse.ok) {
+          throw new Error("Primary server not responding");
+        }
+
+        console.log("Successfully connected to primary URL");
+      } catch (e) {
+        // If primary URL fails, try the fallback port
+        console.log("Primary URL failed, trying fallback port:", fallbackPort);
+        apiBaseUrl = `http://localhost:${fallbackPort}`;
+
+        try {
+          const alternateResponse = await fetch(
+            `${apiBaseUrl}/api/server-info`
+          );
+          if (!alternateResponse.ok) {
+            throw new Error("Alternate server not responding");
+          }
+          console.log(
+            "Successfully connected to alternate port:",
+            fallbackPort
+          );
+        } catch (altError) {
+          console.error("Failed to connect to either port");
+        }
+      }
+
+      console.log("Using API URL for import:", apiBaseUrl);
+
+      // Make API request with explicit port
+      try {
+        const response = await fetch(`${apiBaseUrl}/api/voters/bulk`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(payload),
+        });
+
+        setImportProgress(75);
+
+        console.log("Server response status:", response.status);
+
+        const responseText = await response.text();
+        console.log("Raw server response:", responseText);
+
+        // Try to parse the response
+        let result;
+        try {
+          result = JSON.parse(responseText);
+        } catch (e) {
+          console.error("Failed to parse server response as JSON:", e);
+          throw new Error(`Server returned invalid JSON: ${responseText}`);
+        }
+
+        if (!response.ok) {
+          throw new Error(result.message || "Failed to import voters");
+        }
+
+        // Update results
+        setImportResults({
+          total: data.length,
+          success: result.success || 0,
+          failed: result.failed || 0,
+          errors: result.errors || [],
+        });
+
+        // Only show notification for successful imports
+        if (result.success > 0) {
+          setNotification({
+            type: "success",
+            message: `Successfully imported ${result.success} voters.`,
+          });
+
+          // Refresh the voter list
+          fetchVoters();
+        }
+      } catch (fetchError) {
+        console.error("Fetch error details:", fetchError);
+        throw fetchError;
+      }
+    } catch (error: any) {
+      console.error("Import error details:", error);
+      setImportResults((prev) => ({
+        ...prev,
+        failed: prev.total || 1,
+        errors: [error.message || "An error occurred during import."],
+      }));
+    } finally {
+      setIsImporting(false);
+      setImportProgress(100);
+    }
+  };
+
+  // Close import modal and reset state
+  const handleCloseImport = () => {
+    setShowImportModal(false);
+    setImportFile(null);
+    setImportProgress(0);
+    // Clear results when closing the modal
+    setImportResults({
+      total: 0,
+      success: 0,
+      failed: 0,
+      errors: [],
+    });
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  };
+
   // Check user permissions once instead of using PermissionGuard everywhere
   const canAddVoter = hasPermission("voters", "add");
   const canEditVoter = hasPermission("voters", "edit");
@@ -642,12 +965,19 @@ const VotersManager: React.FC = () => {
                 Add Voter
               </button>
               <button
-                onClick={() => setShowBulkImport(true)}
-                className="inline-flex items-center px-4 py-2 border border-transparent text-sm rounded-md shadow-sm text-indigo-700 bg-white hover:bg-indigo-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-colors duration-200"
+                onClick={handleImportClick}
+                className="inline-flex items-center px-4 py-2 border border-transparent text-sm rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-colors duration-200"
               >
                 <Upload className="h-4 w-4 mr-2" />
                 Import Voters
               </button>
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleFileSelect}
+                accept=".csv"
+                className="hidden"
+              />
             </>
           )}
         </div>
@@ -747,7 +1077,7 @@ const VotersManager: React.FC = () => {
                 Class
               </label>
               <select
-                className="w-full p-2 border border-gray-300 rounded-md"
+                className="w-full p-2 border border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500"
                 value={editingVoter ? editingVoter.class : newVoter.class}
                 onChange={(e) => {
                   if (editingVoter) {
@@ -757,21 +1087,15 @@ const VotersManager: React.FC = () => {
                   }
                 }}
               >
-                <option key="empty-class" value="">
-                  Select class
-                </option>
-                {/* Use the fetched active classes instead of uniqueClasses */}
-                {availableClasses
-                  .filter((cls) => cls.active)
-                  .map((cls) => (
-                    <option key={`class-${cls._id}`} value={cls.name}>
-                      {cls.name}
-                    </option>
-                  ))}
+                <option value="">Select class</option>
+                {availableClasses.map((cls) => (
+                  <option key={cls.name} value={cls.name}>
+                    {cls.name}
+                  </option>
+                ))}
               </select>
             </div>
 
-            {/* Update Year field to use dynamic data */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Year
@@ -802,7 +1126,6 @@ const VotersManager: React.FC = () => {
               </select>
             </div>
 
-            {/* Update House field to use dynamic data */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 House
@@ -1211,6 +1534,206 @@ const VotersManager: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Import Modal */}
+      {showImportModal && (
+        <div className="fixed inset-0 z-50 overflow-y-auto">
+          <div className="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+            <div className="fixed inset-0 transition-opacity">
+              <div className="absolute inset-0 bg-gray-500 opacity-75"></div>
+            </div>
+            <span className="hidden sm:inline-block sm:align-middle sm:h-screen">
+              &#8203;
+            </span>
+            <div className="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+              <div className="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                <div className="sm:flex sm:items-start">
+                  <div className="mx-auto flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-full bg-indigo-100 sm:mx-0 sm:h-10 sm:w-10">
+                    <FileText className="h-6 w-6 text-indigo-600" />
+                  </div>
+                  <div className="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left w-full">
+                    <h3 className="text-lg leading-6 font-medium text-gray-900">
+                      Import Voters
+                    </h3>
+                    <div className="mt-2">
+                      <p className="text-sm text-gray-500">
+                        Upload a CSV file to import voters in bulk. The CSV
+                        should have the following columns: name, gender, class,
+                        year, house.
+                      </p>
+
+                      {/* Only show errors if they exist and we've completed an import */}
+                      {importResults.errors.length > 0 &&
+                        importProgress === 100 && (
+                          <div className="mt-3 mb-4 p-3 border-l-4 border-red-500 bg-red-50 rounded-md overflow-hidden">
+                            {/* ...existing error display code... */}
+                            <div className="flex items-start">
+                              <AlertCircle className="h-5 w-5 text-red-500 mr-2 flex-shrink-0 mt-0.5" />
+                              <div className="w-full overflow-hidden">
+                                <p className="text-sm font-medium text-red-800 mb-1">
+                                  Import failed
+                                </p>
+                                <div className="max-h-24 overflow-y-auto pr-2">
+                                  <ul className="text-sm text-red-700 list-disc list-inside">
+                                    {importResults.errors.map(
+                                      (error, index) => (
+                                        <li
+                                          key={index}
+                                          className="break-words text-xs"
+                                        >
+                                          {error}
+                                        </li>
+                                      )
+                                    )}
+                                  </ul>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                      {importFile && (
+                        <div className="mt-3 p-2 bg-indigo-50 rounded-md">
+                          <p className="text-sm font-medium text-indigo-800">
+                            Selected file: {importFile.name}
+                          </p>
+                          <p className="text-xs text-indigo-500">
+                            Size: {(importFile.size / 1024).toFixed(2)} KB
+                          </p>
+                        </div>
+                      )}
+
+                      {isImporting && (
+                        <div className="mt-4">
+                          <div className="relative pt-1">
+                            <div className="overflow-hidden h-2 mb-4 text-xs flex rounded bg-indigo-200">
+                              <div
+                                style={{ width: `${importProgress}%` }}
+                                className="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-indigo-500 transition-all duration-500"
+                              ></div>
+                            </div>
+                            <p className="text-center text-sm text-indigo-700">
+                              Processing...
+                            </p>
+                          </div>
+                        </div>
+                      )}
+
+                      {importResults.total > 0 &&
+                        importProgress === 100 &&
+                        !isImporting && (
+                          <div
+                            className={`mt-4 border rounded-md p-3 ${
+                              importResults.failed > 0
+                                ? "border-orange-200 bg-orange-50"
+                                : "border-green-200 bg-green-50"
+                            }`}
+                          >
+                            {/* ...existing results display code... */}
+                            <h4 className="font-medium text-gray-700">
+                              Import Results
+                            </h4>
+                            <div className="mt-2 space-y-1">
+                              <p className="text-sm">
+                                Total: {importResults.total} voters
+                              </p>
+                              <p className="text-sm text-green-600 font-medium">
+                                Success: {importResults.success} voters
+                              </p>
+                              {importResults.failed > 0 && (
+                                <p className="text-sm text-red-600 font-medium">
+                                  Failed: {importResults.failed} voters
+                                </p>
+                              )}
+
+                              {importResults.errors.length > 0 &&
+                                importResults.errors.length > 1 && (
+                                  <div className="mt-2">
+                                    <p className="text-sm font-medium text-red-700">
+                                      Errors:
+                                    </p>
+                                    <div className="max-h-32 overflow-y-auto pr-2 mt-1">
+                                      <ul className="list-disc pl-5 text-xs text-red-600 space-y-1">
+                                        {importResults.errors.map(
+                                          (error, index) => (
+                                            <li
+                                              key={index}
+                                              className="break-words"
+                                            >
+                                              {error}
+                                            </li>
+                                          )
+                                        )}
+                                      </ul>
+                                    </div>
+                                  </div>
+                                )}
+                            </div>
+                          </div>
+                        )}
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div className="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                {/* Only show Start Import button if we haven't completed an import or have reset the state */}
+                {importResults.total === 0 || importProgress !== 100 ? (
+                  <>
+                    <button
+                      type="button"
+                      className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-indigo-600 text-base font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:ml-3 sm:w-auto sm:text-sm"
+                      onClick={handleStartImport}
+                      disabled={!importFile || isImporting}
+                    >
+                      {isImporting ? "Importing..." : "Start Import"}
+                    </button>
+                    <button
+                      type="button"
+                      className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
+                      onClick={handleCloseImport}
+                      disabled={isImporting}
+                    >
+                      Cancel
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-indigo-600 text-base font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:ml-3 sm:w-auto sm:text-sm"
+                      onClick={handleCloseImport}
+                    >
+                      Close
+                    </button>
+                    <button
+                      type="button"
+                      className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
+                      onClick={() => {
+                        // Reset the import state AND file input to allow selecting a new file
+                        setImportProgress(0);
+                        setImportResults({
+                          total: 0,
+                          success: 0,
+                          failed: 0,
+                          errors: [],
+                        });
+                        setImportFile(null);
+                        if (fileInputRef.current) {
+                          fileInputRef.current.value = "";
+                        }
+                        // Trigger file input dialog
+                        handleImportClick();
+                      }}
+                    >
+                      Select New File
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

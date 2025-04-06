@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { motion } from "framer-motion"; // Add this import
 import {
   Users,
   Check,
@@ -14,6 +15,7 @@ import {
   Award,
   Settings,
   Clock,
+  User, // Add User icon
 } from "lucide-react";
 import {
   Chart as ChartJS,
@@ -187,6 +189,25 @@ const Dashboard: React.FC = () => {
     } catch (e) {
       console.error("Error formatting date:", e);
       return "15-May-2025"; // Fallback
+    }
+  };
+
+  // Add formatTime function to match VotingAuth
+  const formatTime = (date: Date): string => {
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffSec = Math.floor(diffMs / 1000);
+    const diffMin = Math.floor(diffSec / 60);
+    const diffHour = Math.floor(diffMin / 60);
+
+    if (diffSec < 60) {
+      return "Just now";
+    } else if (diffMin < 60) {
+      return `${diffMin} minute${diffMin > 1 ? "s" : ""} ago`;
+    } else if (diffHour < 24) {
+      return `${diffHour} hour${diffHour > 1 ? "s" : ""} ago`;
+    } else {
+      return date.toLocaleDateString();
     }
   };
 
@@ -415,36 +436,66 @@ const Dashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* Recent Voters Section */}
-      <div className="bg-white rounded-lg p-6">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">
-          Recent Voters
-        </h3>
-        {loading ? (
-          <div className="flex justify-center py-8">
-            <RefreshCw className="h-8 w-8 text-indigo-400 animate-spin" />
+      {/* Recent Voters Section - Updated to match VotingAuth.tsx */}
+      <div className="bg-gray-50 rounded-lg p-4">
+        <h4 className="text-lg font-medium text-gray-700 mb-3">
+          Recently Voted
+        </h4>
+        <div className="overflow-hidden">
+          {stats.recentVoters && stats.recentVoters.length > 0 ? (
+            <motion.div
+              className="flex"
+              initial={{ x: "100%" }}
+              animate={{ x: "-100%" }}
+              transition={{
+                duration: 45,
+                repeat: Infinity,
+                ease: "linear",
+              }}
+            >
+              {[...stats.recentVoters, ...stats.recentVoters].map(
+                (voter, index) => (
+                  <div
+                    key={`${voter.id || "voter"}-${index}`}
+                    className="flex items-center space-x-3 bg-white rounded-lg px-4 py-3 shadow-sm mr-2 flex-shrink-0"
+                    style={{ width: "250px" }}
+                  >
+                    <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center">
+                      <User className="h-4 w-4 text-indigo-600" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-gray-900 truncate">
+                        {voter.name}
+                      </p>
+                      <p className="text-xs text-gray-500 truncate">
+                        {voter.voterId}
+                      </p>
+                      <div className="text-xs text-gray-400">
+                        {voter.votedAt
+                          ? formatTime(new Date(voter.votedAt))
+                          : "Recently"}
+                      </div>
+                    </div>
+                  </div>
+                )
+              )}
+            </motion.div>
+          ) : (
+            <div className="text-center py-4 text-gray-500">
+              <p>No recent voters</p>
+            </div>
+          )}
+        </div>
+
+        {stats.recentVoters && stats.recentVoters.length > 0 && (
+          <div className="mt-3 text-center">
+            <Link
+              to="/election-manager/voters"
+              className="text-sm font-medium text-indigo-600 hover:text-indigo-500"
+            >
+              View all voters
+            </Link>
           </div>
-        ) : stats.recentVoters.length > 0 ? (
-          <div className="space-y-4">
-            {stats.recentVoters.map((voter) => (
-              <div
-                key={voter.id}
-                className="flex items-center justify-between border-b pb-3"
-              >
-                <div>
-                  <p className="font-medium text-gray-800">{voter.name}</p>
-                  <p className="text-sm text-gray-500">{voter.voterId}</p>
-                </div>
-                <div className="text-xs text-gray-500">
-                  {new Date(voter.votedAt).toLocaleTimeString()}
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p className="text-gray-500 text-center py-8">
-            No recent voting activity
-          </p>
         )}
       </div>
 

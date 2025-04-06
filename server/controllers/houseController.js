@@ -3,7 +3,7 @@ import House from "../models/House.js";
 // Get all houses
 export const getAllHouses = async (req, res) => {
   try {
-    const houses = await House.find().sort({ name: 1 });
+    const houses = await House.find().sort({ name: 1 }); // Sort by name
     res.status(200).json(houses);
   } catch (error) {
     res.status(500).json({ message: "Server error", error: error.message });

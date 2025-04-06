@@ -1,23 +1,15 @@
 import React, { useState, useEffect } from "react";
 import {
-  BarChart3,
-  PieChart,
-  DollarSign,
-  AlertCircle,
-  RefreshCw,
+  Search,
   FileSpreadsheet,
   Printer,
-  ChevronDown,
+  Users,
   Calendar,
   Clock,
-  Users,
-  GraduationCap,
-  Home,
-  Search,
   Filter,
   X,
-  Check,
-  Award,
+  AlertCircle,
+  RefreshCw,
 } from "lucide-react";
 import { useUser } from "../../context/UserContext";
 
@@ -28,35 +20,21 @@ interface Position {
   priority: number;
 }
 
-interface VoteTimeline {
-  hour: number;
-  count: number;
-}
-
-interface VotingPattern {
-  class?: string;
+interface VoterData {
+  id: string;
+  name: string;
+  voterId: string;
+  class: string;
   house?: string;
   year?: string;
-  count: number;
-  percentage: number;
-}
-
-interface VotingMetrics {
-  totalVotes: number;
-  totalEligibleVoters: number;
-  turnoutPercentage: number;
-  averageVotesPerPosition: number;
-  votingTimeline: VoteTimeline[];
-  byClass: VotingPattern[];
-  byHouse: VotingPattern[];
-  byYear: VotingPattern[];
+  votedAt: Date;
+  votedFor: Record<string, string>;
 }
 
 const DetailedVoteAnalysis: React.FC = () => {
   const { hasPermission } = useUser();
-  const [metrics, setMetrics] = useState<VotingMetrics | null>(null);
+  const [voterData, setVoterData] = useState<VoterData[]>([]);
   const [positions, setPositions] = useState<Position[]>([]);
-  const [selectedPosition, setSelectedPosition] = useState<string>("all");
   const [dateRange, setDateRange] = useState<{ from: string; to: string }>({
     from: new Date(new Date().setDate(new Date().getDate() - 7))
       .toISOString()
@@ -65,24 +43,23 @@ const DetailedVoteAnalysis: React.FC = () => {
   });
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [chartType, setChartType] = useState<"bar" | "pie">("bar");
-  const [filter, setFilter] = useState<"class" | "house" | "year">("class");
+
+  // Filters
   const [searchTerm, setSearchTerm] = useState("");
+  const [filterClass, setFilterClass] = useState("");
+  const [filterPosition, setFilterPosition] = useState("");
+  const [filterCandidate, setFilterCandidate] = useState("");
 
-  // Utility function for safe number formatting
-  const safeNumber = (value: any, decimals: number = 2): string => {
-    if (value === undefined || value === null || isNaN(value)) {
-      return (0).toFixed(decimals);
-    }
-    return Number(value).toFixed(decimals);
-  };
-
-  // Check user permissions once
+  // Check user permissions
   const canViewAnalytics = hasPermission("analytics", "view");
   const canExportAnalytics = hasPermission("analytics", "export");
 
-  // Fetch metrics data
-  const fetchMetrics = async () => {
+  // Create a mapping from position IDs to position names
+  const [positionMap, setPositionMap] = useState<Record<string, string>>({});
+  const [candidateMap, setCandidateMap] = useState<Record<string, string>>({});
+
+  // Fetch voter data
+  const fetchVoterData = async () => {
     if (!canViewAnalytics) return;
 
     try {
@@ -96,9 +73,45 @@ const DetailedVoteAnalysis: React.FC = () => {
         Authorization: token ? `Bearer ${token}` : "",
       };
 
+      // Fetch all candidates first to ensure we have their data
+      const candidatesResponse = await fetch(
+        `${
+          import.meta.env.VITE_API_URL || "http://localhost:5000"
+        }/api/candidates`,
+        { headers }
+      );
+
+      if (!candidatesResponse.ok) {
+        throw new Error(
+          `Failed to fetch candidates: ${candidatesResponse.status}`
+        );
+      }
+
+      const candidates = await candidatesResponse.json();
+      const candidateMap: Record<string, string> = {};
+
+      // Create mappings for candidates with proper ID handling
+      candidates.forEach((candidate: { _id: string; name: string }) => {
+        // Store the ID as-is
+        candidateMap[candidate._id] = candidate.name;
+
+        // Also add a cleaned version without quotes
+        const cleanId = candidate._id.toString().replace(/"/g, "");
+        candidateMap[cleanId] = candidate.name;
+
+        // Also map by name for direct lookups (helps with already resolved names)
+        candidateMap[candidate.name] = candidate.name;
+      });
+
+      setCandidateMap(candidateMap);
+      console.log(
+        `Created candidate map with ${
+          Object.keys(candidateMap).length
+        } candidate mappings`
+      );
+
       // Build the query string for filters
       const params = new URLSearchParams({
-        position: selectedPosition !== "all" ? selectedPosition : "",
         from: dateRange.from,
         to: dateRange.to,
       });
@@ -106,46 +119,122 @@ const DetailedVoteAnalysis: React.FC = () => {
       const response = await fetch(
         `${
           import.meta.env.VITE_API_URL || "http://localhost:5000"
-        }/api/analytics/voting-patterns?${params.toString()}`,
+        }/api/elections/detailed-vote-analysis?${params.toString()}`,
         { headers }
       );
 
       if (!response.ok) {
         if (response.status === 404) {
           // Handle specifically the case where the endpoint is not found or no data
-          console.warn("Analytics endpoint not found or no data available.");
-          // Set empty data with default values instead of throwing
-          setMetrics({
-            totalVotes: 0,
-            totalEligibleVoters: 0,
-            turnoutPercentage: 0,
-            averageVotesPerPosition: 0,
-            votingTimeline: [],
-            byClass: [],
-            byHouse: [],
-            byYear: [],
-          });
+          console.warn(
+            "Detailed vote analysis endpoint not found or no data available."
+          );
+          setVoterData([]);
           return;
         }
-        throw new Error(`Failed to fetch analytics: ${response.status}`);
+        throw new Error(
+          `Failed to fetch detailed vote data: ${response.status}`
+        );
       }
 
       const data = await response.json();
 
-      // Transform received data to ensure proper structure (only ensuring arrays)
-      const safeData = {
-        ...data,
-        byClass: Array.isArray(data.byClass) ? data.byClass : [],
-        byHouse: Array.isArray(data.byHouse) ? data.byHouse : [],
-        byYear: Array.isArray(data.byYear) ? data.byYear : [],
-        votingTimeline: Array.isArray(data.votingTimeline)
-          ? data.votingTimeline
-          : [],
-      };
-      setMetrics(safeData);
+      // Log first few vote records to debug position mapping
+      if (data.length > 0) {
+        console.log("Sample vote data:", data.slice(0, 2));
+
+        // Check votedFor structure in detail
+        const sampleVotedFor = data[0].votedFor;
+        console.log("Sample votedFor structure:", sampleVotedFor);
+
+        if (sampleVotedFor) {
+          const keys = Object.keys(sampleVotedFor);
+          console.log("Vote position IDs:", keys);
+
+          // Check for undefined or problematic keys
+          keys.forEach((key) => {
+            if (!key || key === "undefined" || key === "null") {
+              console.warn(`Problematic key found in votedFor: '${key}'`);
+            }
+          });
+        }
+      }
+
+      // Transform the data to match our interface
+      const transformedData: VoterData[] = data.map((item: any) => {
+        // Ensure votedFor is an object and handle any problematic keys
+        const cleanedVotedFor: Record<string, string> = {};
+        if (item.votedFor && typeof item.votedFor === "object") {
+          Object.entries(item.votedFor).forEach(([key, value]) => {
+            // Instead of skipping undefined keys, rename them to a special key
+            if (key === "undefined" || key === "null") {
+              // Use a special key to mark these votes
+              cleanedVotedFor["__unknown__"] = value as string;
+              console.warn(
+                `Converting invalid position key: '${key}' to '__unknown__' for voter: ${item.name}`
+              );
+            } else {
+              cleanedVotedFor[key] = value as string;
+            }
+          });
+        }
+
+        return {
+          id: item.id,
+          name: item.name,
+          voterId: item.voterId,
+          class: item.class || "Unknown",
+          house: item.house || "Unknown",
+          year: item.year || "Unknown",
+          votedAt: new Date(item.votedAt),
+          votedFor: cleanedVotedFor,
+        };
+      });
+
+      setVoterData(transformedData);
+
+      // Check for position ID issues after setting data
+      setTimeout(() => {
+        if (transformedData.length > 0) {
+          const missingPositions = new Set();
+          transformedData.forEach((voter) => {
+            Object.keys(voter.votedFor).forEach((posId) => {
+              if (!positionMap[posId]) {
+                missingPositions.add(posId);
+              }
+            });
+          });
+
+          if (missingPositions.size > 0) {
+            console.warn(
+              "Missing position mappings for IDs:",
+              Array.from(missingPositions)
+            );
+          }
+        }
+      }, 1000);
+
+      // Log missing candidate mappings
+      const missingCandidateIds = new Set<string>();
+      data.forEach((voter: any) => {
+        (Object.values(voter.votedFor) as string[]).forEach((candidateId) => {
+          if (!candidateMap[candidateId]) {
+            missingCandidateIds.add(candidateId);
+          }
+        });
+      });
+
+      if (missingCandidateIds.size > 0) {
+        console.warn(
+          "Missing candidate mappings for IDs:",
+          Array.from(missingCandidateIds)
+        );
+      }
+
+      setVoterData(data);
     } catch (error: any) {
-      console.error("Error fetching voting analytics:", error);
-      setError(error.message || "Failed to load voting analytics");
+      console.error("Error fetching voting data:", error);
+      setError(error.message || "Failed to load voting data");
     } finally {
       setIsLoading(false);
     }
@@ -175,6 +264,35 @@ const DetailedVoteAnalysis: React.FC = () => {
       }
 
       const data = await response.json();
+      console.log("Fetched positions:", data.length);
+
+      // Build a bidirectional map that works with both IDs and names
+      const posMap: Record<string, string> = {};
+
+      data.forEach((position: Position) => {
+        // ID -> Name mapping
+        if (position._id) {
+          posMap[position._id] = position.title;
+
+          // Also add without quotes if it might be stored that way
+          if (typeof position._id === "string") {
+            const cleanId = position._id.replace(/"/g, "");
+            posMap[cleanId] = position.title;
+          }
+        }
+
+        // Name -> Name mapping (for direct lookups)
+        if (position.title) {
+          posMap[position.title] = position.title;
+        }
+      });
+
+      console.log(
+        "Position map created with keys:",
+        Object.keys(posMap).slice(0, 5)
+      );
+
+      setPositionMap(posMap);
       setPositions(data);
     } catch (error: any) {
       console.error("Error fetching positions:", error);
@@ -185,14 +303,162 @@ const DetailedVoteAnalysis: React.FC = () => {
   useEffect(() => {
     if (canViewAnalytics) {
       fetchPositions();
-      fetchMetrics();
+      fetchVoterData();
     }
-  }, [canViewAnalytics, selectedPosition, dateRange]);
+  }, [canViewAnalytics, dateRange]);
 
-  // Handle print function
+  // Format date time with error handling
+  const formatDateTime = (date: Date | string): string => {
+    try {
+      const parsedDate = date instanceof Date ? date : new Date(date);
+      if (isNaN(parsedDate.getTime())) {
+        throw new Error("Invalid date");
+      }
+      return new Intl.DateTimeFormat("en-US", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true,
+      }).format(parsedDate);
+    } catch (error) {
+      console.error("Error formatting date:", error);
+      return "Invalid Date/Time";
+    }
+  };
+
+  // Get unique values for filters
+  const getUniqueClasses = () => {
+    return Array.from(new Set(voterData.map((voter) => voter.class)));
+  };
+
+  const getUniquePositions = () => {
+    // Change to use transformedVoterData instead of voterData to match the filter comparison
+    return Array.from(
+      new Set(
+        transformedVoterData.flatMap((voter) => Object.keys(voter.votedFor))
+      )
+    );
+  };
+
+  const getUniqueCandidates = () => {
+    return Array.from(
+      new Set(voterData.flatMap((voter) => Object.values(voter.votedFor)))
+    );
+  };
+
+  // Helper function to get position name from ID
+  const getPositionName = (positionKey: string | undefined): string => {
+    if (!positionKey) return "Unknown Position";
+    return positionMap[positionKey] || `Position ID: ${positionKey}`;
+  };
+
+  // Helper function to get candidate name from ID - Modified to handle the "Unknown Candidate" case better
+  const getCandidateName = (candidateKey: string | undefined): string => {
+    if (!candidateKey) return "Unknown";
+
+    // Special handling for abstentions
+    if (candidateKey === "Abstained" || candidateKey === "abstained") {
+      return "Abstained";
+    }
+
+    // If it's already a name like "Charlie Brown" rather than an ID, return it directly
+    if (candidateKey.includes(" ") && candidateKey !== "Unknown Candidate") {
+      return candidateKey;
+    }
+
+    // Check if it's already "Unknown Candidate" and simplify it
+    if (candidateKey === "Unknown Candidate") {
+      return "Unknown";
+    }
+
+    // Try to look up in candidate map
+    return candidateMap[candidateKey] || "Unknown";
+  };
+
+  // Transform voter data to handle missing references
+  const transformedVoterData = voterData.map((voter) => ({
+    ...voter,
+    votedFor: Object.entries(voter.votedFor).reduce(
+      (acc, [positionId, candidateId]) => {
+        acc[getPositionName(positionId)] = getCandidateName(candidateId);
+        return acc;
+      },
+      {} as Record<string, string>
+    ),
+  }));
+
+  // Update the mapping logic to include candidate names
+  useEffect(() => {
+    const fetchCandidates = async () => {
+      try {
+        const token = localStorage.getItem("token");
+        const headers = {
+          "Content-Type": "application/json",
+          Authorization: token ? `Bearer ${token}` : "",
+        };
+
+        const response = await fetch(
+          `${
+            import.meta.env.VITE_API_URL || "http://localhost:5000"
+          }/api/candidates`,
+          { headers }
+        );
+
+        if (!response.ok) {
+          throw new Error(`Failed to fetch candidates: ${response.status}`);
+        }
+
+        const data = await response.json();
+        const candidateMap: Record<string, string> = {};
+
+        data.forEach((candidate: { _id: string; name: string }) => {
+          // Store the ID as-is
+          candidateMap[candidate._id] = candidate.name;
+
+          // Also add a cleaned version without quotes
+          const cleanId = candidate._id.toString().replace(/"/g, "");
+          candidateMap[cleanId] = candidate.name;
+
+          // Also map by name for direct lookups
+          candidateMap[candidate.name] = candidate.name;
+        });
+
+        // Add special case for abstentions
+        candidateMap["Abstained"] = "Abstained";
+        candidateMap["abstained"] = "Abstained";
+
+        setCandidateMap(candidateMap);
+        console.log("Updated candidate map with both IDs and names as keys");
+      } catch (error) {
+        console.error("Error fetching candidates:", error);
+      }
+    };
+
+    fetchCandidates();
+  }, []);
+
+  // Filter voter data
+  const filteredVoters = transformedVoterData.filter((voter) => {
+    const matchesSearch =
+      voter.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      voter.voterId.toLowerCase().includes(searchTerm.toLowerCase());
+
+    const matchesClass = !filterClass || voter.class === filterClass;
+
+    const matchesPosition =
+      !filterPosition || Object.keys(voter.votedFor).includes(filterPosition);
+
+    const matchesCandidate =
+      !filterCandidate ||
+      Object.values(voter.votedFor).includes(filterCandidate);
+
+    return matchesSearch && matchesClass && matchesPosition && matchesCandidate;
+  });
+
+  // Handle print
   const handlePrint = () => {
-    if (!metrics) return;
-
     const printWindow = window.open("", "_blank");
     if (!printWindow) {
       alert("Please allow pop-ups to print");
@@ -202,19 +468,59 @@ const DetailedVoteAnalysis: React.FC = () => {
     const styles = `
       <style>
         body { font-family: Arial, sans-serif; margin: 0; padding: 20px; }
-        h1, h2 { text-align: center; color: #4338ca; }
-        h1 { margin-bottom: 5px; }
-        h2 { margin-top: 0; margin-bottom: 20px; font-size: 18px; color: #666; }
-        .metrics-card { margin-bottom: 20px; padding: 15px; border: 1px solid #e5e7eb; border-radius: 8px; }
-        .metrics-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; margin-bottom: 20px; }
-        .metric-item { padding: 15px; background-color: #f9fafb; border-radius: 8px; text-align: center; }
-        .metric-value { font-size: 24px; font-weight: bold; color: #4f46e5; margin: 10px 0; }
-        .metric-label { font-size: 14px; color: #6b7280; }
-        h3 { color: #4f46e5; margin-top: 30px; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; }
-        table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
-        th, td { padding: 10px; text-align: left; border-bottom: 1px solid #e5e7eb; }
-        th { background-color: #f3f4f6; font-weight: bold; color: #374151; }
-        .footer { margin-top: 30px; text-align: center; font-size: 12px; color: #6b7280; border-top: 1px solid #e5e7eb; padding-top: 15px; }
+        h1 { text-align: center; color: #4338ca; margin-bottom: 20px; }
+        .voter-card {
+          background: #fff;
+          border: 1px solid #e5e7eb;
+          border-radius: 8px;
+          margin-bottom: 20px;
+          padding: 16px;
+        }
+        .voter-info {
+          display: flex;
+          align-items: center;
+          margin-bottom: 12px;
+        }
+        .voter-avatar {
+          width: 40px;
+          height: 40px;
+          border-radius: 50%;
+          background: #e5e7eb;
+          margin-right: 12px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .voter-details {
+          flex-grow: 1;
+        }
+        .voter-name {
+          font-weight: 600;
+          color: #111827;
+        }
+        .voter-id {
+          color: #6b7280;
+          font-size: 14px;
+        }
+        .votes-cast {
+          margin-top: 8px;
+          padding-left: 52px;
+        }
+        .vote-item {
+          margin-bottom: 4px;
+          color: #374151;
+        }
+        .vote-position {
+          color: #6b7280;
+        }
+        .footer {
+          margin-top: 40px;
+          text-align: center;
+          font-size: 12px;
+          color: #6b7280;
+          border-top: 1px solid #e5e7eb;
+          padding-top: 20px;
+        }
       </style>
     `;
 
@@ -222,140 +528,51 @@ const DetailedVoteAnalysis: React.FC = () => {
       <!DOCTYPE html>
       <html>
         <head>
-          <title>Detailed Voting Analysis - Peki Senior High School</title>
+          <title>Detailed Vote Analysis</title>
           ${styles}
         </head>
         <body>
-          <h1>Peki Senior High School - Voting Analysis</h1>
-          <h2>Prefectorial Elections ${new Date().getFullYear()}</h2>
+          <h1>Student Council Election ${new Date().getFullYear()}</h1>
+          <h1>Detailed Vote Analysis</h1>
           
-          <div class="metrics-card">
-            <h3>Key Metrics</h3>
-            <div class="metrics-grid">
-              <div class="metric-item">
-                <div class="metric-label">Total Votes Cast</div>
-                <div class="metric-value">${metrics.totalVotes}</div>
+          ${filteredVoters
+            .map(
+              (voter) => `
+            <div class="voter-card">
+              <div class="voter-info">
+                <div class="voter-avatar">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6b7280">
+                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                    <circle cx="12" cy="7" r="4"></circle>
+                  </svg>
+                </div>
+                <div class="voter-details">
+                  <div class="voter-name">${voter.name}</div>
+                  <div class="voter-id">${voter.voterId}</div>
+                </div>
+                <div class="voter-class">${voter.class}</div>
+                <div class="voter-time">${formatDateTime(voter.votedAt)}</div>
               </div>
-              <div class="metric-item">
-                <div class="metric-label">Eligible Voters</div>
-                <div class="metric-value">${metrics.totalEligibleVoters}</div>
-              </div>
-              <div class="metric-item">
-                <div class="metric-label">Voter Turnout</div>
-                <div class="metric-value">${safeNumber(
-                  metrics.turnoutPercentage
-                )}%</div>
-              </div>
-              <div class="metric-item">
-                <div class="metric-label">Avg. Votes Per Position</div>
-                <div class="metric-value">${safeNumber(
-                  metrics.averageVotesPerPosition
-                )}</div>
+              <div class="votes-cast">
+                ${Object.entries(voter.votedFor)
+                  .map(
+                    ([positionId, candidate], index) => `
+                  <div class="vote-item">
+                    <span class="vote-position">${getPositionName(
+                      positionId
+                    )}:</span> ${candidate}
+                  </div>
+                `
+                  )
+                  .join("")}
               </div>
             </div>
-          </div>
-          
-          <h3>Voting by Class</h3>
-          <table>
-            <thead>
-              <tr>
-                <th>Class</th>
-                <th>Votes</th>
-                <th>Percentage</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${metrics.byClass
-                .map(
-                  (item) => `
-                <tr>
-                  <td>${item.class || "Unknown"}</td>
-                  <td>${item.count}</td>
-                  <td>${safeNumber(item.percentage)}%</td>
-                </tr>
-              `
-                )
-                .join("")}
-            </tbody>
-          </table>
-          
-          <h3>Voting by House</h3>
-          <table>
-            <thead>
-              <tr>
-                <th>House</th>
-                <th>Votes</th>
-                <th>Percentage</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${metrics.byHouse
-                .map(
-                  (item) => `
-                <tr>
-                  <td>${item.house || "Unknown"}</td>
-                  <td>${item.count}</td>
-                  <td>${safeNumber(item.percentage)}%</td>
-                </tr>
-              `
-                )
-                .join("")}
-            </tbody>
-          </table>
-          
-          <h3>Voting by Year</h3>
-          <table>
-            <thead>
-              <tr>
-                <th>Year</th>
-                <th>Votes</th>
-                <th>Percentage</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${metrics.byYear
-                .map(
-                  (item) => `
-                <tr>
-                  <td>${item.year || "Unknown"}</td>
-                  <td>${item.count}</td>
-                  <td>${safeNumber(item.percentage)}%</td>
-                </tr>
-              `
-                )
-                .join("")}
-            </tbody>
-          </table>
-          
-          <h3>Voting Timeline</h3>
-          <table>
-            <thead>
-              <tr>
-                <th>Hour</th>
-                <th>Vote Count</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${metrics.votingTimeline
-                .map(
-                  (item) => `
-                <tr>
-                  <td>${item.hour}:00</td>
-                  <td>${item.count}</td>
-                </tr>
-              `
-                )
-                .join("")}
-            </tbody>
-          </table>
+          `
+            )
+            .join("")}
           
           <div class="footer">
-            <p>Printed on ${new Date().toLocaleString()}</p>
-            <p>Analysis period: ${new Date(
-              dateRange.from
-            ).toLocaleDateString()} - ${new Date(
-      dateRange.to
-    ).toLocaleDateString()}</p>
+            <p>Generated on ${new Date().toLocaleString()}</p>
             <p>Peki Senior High School - Prefectorial Elections ${new Date().getFullYear()}</p>
           </div>
         </body>
@@ -367,60 +584,26 @@ const DetailedVoteAnalysis: React.FC = () => {
   };
 
   // Handle export to Excel/CSV
-  const handleExport = () => {
-    if (!metrics) return;
+  const handleExportExcel = () => {
+    let csvContent = "Voter ID,Name,Class,Date/Time,Position,Voted For\n";
 
-    // Create CSV content
-    let csvContent = "Type,Category,Votes,Percentage\n";
-
-    // Class data
-    metrics.byClass.forEach((item) => {
-      csvContent += `Class,${item.class || "Unknown"},${
-        item.count
-      },${safeNumber(item.percentage)}%\n`;
+    filteredVoters.forEach((voter) => {
+      Object.entries(voter.votedFor).forEach(([positionId, candidate]) => {
+        csvContent += `${voter.voterId},"${voter.name}","${
+          voter.class
+        }","${formatDateTime(voter.votedAt)}","${getPositionName(
+          positionId
+        )}","${candidate}"\n`;
+      });
     });
 
-    // House data
-    csvContent += "\n";
-    metrics.byHouse.forEach((item) => {
-      csvContent += `House,${item.house || "Unknown"},${
-        item.count
-      },${safeNumber(item.percentage)}%\n`;
-    });
-
-    // Year data
-    csvContent += "\n";
-    metrics.byYear.forEach((item) => {
-      csvContent += `Year,${item.year || "Unknown"},${item.count},${safeNumber(
-        item.percentage
-      )}%\n`;
-    });
-
-    // Timeline data
-    csvContent += "\nHour,Vote Count\n";
-    metrics.votingTimeline.forEach((item) => {
-      csvContent += `${item.hour}:00,${item.count}\n`;
-    });
-
-    // Add summary stats
-    csvContent += "\nKey Metrics,Value\n";
-    csvContent += `Total Votes,${metrics.totalVotes}\n`;
-    csvContent += `Total Eligible Voters,${metrics.totalEligibleVoters}\n`;
-    csvContent += `Turnout Percentage,${safeNumber(
-      metrics.turnoutPercentage
-    )}%\n`;
-    csvContent += `Average Votes Per Position,${safeNumber(
-      metrics.averageVotesPerPosition
-    )}\n`;
-
-    // Create and download the file
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
     link.setAttribute(
       "download",
-      `voting_analysis_${new Date().toISOString().split("T")[0]}.csv`
+      `detailed_vote_analysis_${new Date().toISOString().split("T")[0]}.csv`
     );
     link.style.visibility = "hidden";
     document.body.appendChild(link);
@@ -437,26 +620,26 @@ const DetailedVoteAnalysis: React.FC = () => {
           Access Restricted
         </h3>
         <p className="text-yellow-700">
-          You don't have permission to view detailed voting analytics.
+          You don't have permission to view detailed voting data.
         </p>
       </div>
     );
   }
 
   // Render loading state
-  if (isLoading && !metrics) {
+  if (isLoading && voterData.length === 0) {
     return (
       <div className="flex justify-center py-12">
         <div className="flex flex-col items-center">
           <RefreshCw className="h-8 w-8 text-indigo-500 animate-spin mb-2" />
-          <p className="text-gray-500">Loading Analytics...</p>
+          <p className="text-gray-500">Loading voter data...</p>
         </div>
       </div>
     );
   }
 
   // Render error state
-  if (error && !isLoading && !metrics) {
+  if (error && !isLoading && voterData.length === 0) {
     return (
       <div className="bg-red-50 p-4 rounded-md">
         <div className="flex">
@@ -467,94 +650,32 @@ const DetailedVoteAnalysis: React.FC = () => {
     );
   }
 
-  // Helper function to render the active dataset based on filter
-  const getFilteredData = () => {
-    if (!metrics) return [];
-
-    // Ensure we're working with arrays and provide fallbacks
-    const ensureArray = (data: any) => {
-      return Array.isArray(data) ? data : [];
-    };
-
-    switch (filter) {
-      case "class":
-        return ensureArray(metrics.byClass).filter(
-          (item) =>
-            !searchTerm ||
-            (item.class &&
-              item.class.toLowerCase().includes(searchTerm.toLowerCase()))
-        );
-      case "house":
-        return ensureArray(metrics.byHouse).filter(
-          (item) =>
-            !searchTerm ||
-            (item.house &&
-              item.house.toLowerCase().includes(searchTerm.toLowerCase()))
-        );
-      case "year":
-        return ensureArray(metrics.byYear).filter(
-          (item) =>
-            !searchTerm ||
-            (item.year &&
-              item.year.toLowerCase().includes(searchTerm.toLowerCase()))
-        );
-      default:
-        return [];
-    }
-  };
-
   return (
     <div className="space-y-6">
-      {/* Page Header */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between space-y-3 md:space-y-0 bg-gradient-to-r from-indigo-700 to-purple-700 text-white p-4 rounded-lg shadow-md">
-        <div>
-          <h2 className="text-xl font-bold">Detailed Voting Analysis</h2>
-          <p className="text-indigo-100 text-sm font-sans font-light">
-            Advanced metrics and patterns of voting behavior
-          </p>
-        </div>
-
-        {canExportAnalytics && (
-          <div className="flex space-x-2">
-            <button
-              onClick={handlePrint}
-              className="inline-flex items-center px-4 py-2 border border-transparent text-sm rounded-md shadow-sm text-indigo-700 bg-white hover:bg-indigo-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-colors duration-200"
-            >
-              <Printer className="h-4 w-4 mr-2" />
-              Print Report
-            </button>
-            <button
-              onClick={handleExport}
-              className="inline-flex items-center px-4 py-2 border border-transparent text-sm rounded-md shadow-sm text-indigo-700 bg-white hover:bg-indigo-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-colors duration-200"
-            >
-              <FileSpreadsheet className="h-4 w-4 mr-2" />
-              Export Data
-            </button>
-          </div>
-        )}
+      {/* Header */}
+      <div className="bg-gradient-to-r from-indigo-700 to-purple-700 text-white p-4 rounded-lg shadow-md">
+        <h2 className="text-xl font-bold">Detailed Vote Analysis</h2>
+        <p className="text-indigo-100 text-sm">
+          Analyze individual voting patterns and results
+        </p>
       </div>
 
       {/* Filters */}
-      <div className="bg-white p-4 rounded-lg shadow-md">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Position
-            </label>
-            <select
-              className="w-full p-2 border border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500"
-              value={selectedPosition}
-              onChange={(e) => setSelectedPosition(e.target.value)}
-            >
-              <option value="all">All Positions</option>
-              {positions.map((position) => (
-                <option key={position._id} value={position._id}>
-                  {position.title}
-                </option>
-              ))}
-            </select>
-          </div>
+      <div className="bg-white p-4 rounded-lg shadow-md space-y-4">
+        {/* Search */}
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 h-5 w-5" />
+          <input
+            type="text"
+            placeholder="Search by name or voter ID..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+          />
+        </div>
 
+        {/* Date range */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
               From Date
@@ -582,319 +703,157 @@ const DetailedVoteAnalysis: React.FC = () => {
               }
             />
           </div>
+        </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Chart Type
-            </label>
-            <div className="flex p-1 border border-gray-300 rounded-md">
-              <button
-                className={`flex-1 py-1 px-2 rounded-md flex items-center justify-center ${
-                  chartType === "bar"
-                    ? "bg-indigo-100 text-indigo-700"
-                    : "text-gray-500"
-                }`}
-                onClick={() => setChartType("bar")}
-              >
-                <BarChart3 className="h-4 w-4 mr-1" />
-                Bar
-              </button>
-              <button
-                className={`flex-1 py-1 px-2 rounded-md flex items-center justify-center ${
-                  chartType === "pie"
-                    ? "bg-indigo-100 text-indigo-700"
-                    : "text-gray-500"
-                }`}
-                onClick={() => setChartType("pie")}
-              >
-                <PieChart className="h-4 w-4 mr-1" />
-                Pie
-              </button>
-            </div>
+        {/* Filter selects */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <select
+            className="w-full p-2 border border-gray-300 rounded-lg"
+            value={filterClass}
+            onChange={(e) => setFilterClass(e.target.value)}
+          >
+            <option value="">All Classes</option>
+            {getUniqueClasses().map((cls) => (
+              <option key={cls} value={cls}>
+                {cls}
+              </option>
+            ))}
+          </select>
+
+          <select
+            className="w-full p-2 border border-gray-300 rounded-lg"
+            value={filterPosition}
+            onChange={(e) => setFilterPosition(e.target.value)}
+          >
+            <option value="">All Positions</option>
+            {getUniquePositions().map((pos) => (
+              <option key={pos} value={pos}>
+                {pos}
+              </option>
+            ))}
+          </select>
+
+          <select
+            className="w-full p-2 border border-gray-300 rounded-lg"
+            value={filterCandidate}
+            onChange={(e) => setFilterCandidate(e.target.value)}
+          >
+            <option value="">All Candidates</option>
+            {getUniqueCandidates().map((candidate) => (
+              <option key={candidate} value={candidate}>
+                {candidate}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {/* Action buttons */}
+        <div className="flex justify-between items-center">
+          <div className="text-sm text-gray-500">
+            {filteredVoters.length}{" "}
+            {filteredVoters.length === 1 ? "voter" : "voters"} found
           </div>
-        </div>
-
-        <div className="mt-4 flex flex-wrap gap-2">
-          <button
-            className={`px-3 py-1.5 rounded-md text-sm font-medium ${
-              filter === "class"
-                ? "bg-indigo-600 text-white"
-                : "bg-gray-100 text-gray-800 hover:bg-gray-200"
-            }`}
-            onClick={() => setFilter("class")}
-          >
-            <GraduationCap className="h-4 w-4 inline mr-1" />
-            By Class
-          </button>
-          <button
-            className={`px-3 py-1.5 rounded-md text-sm font-medium ${
-              filter === "house"
-                ? "bg-indigo-600 text-white"
-                : "bg-gray-100 text-gray-800 hover:bg-gray-200"
-            }`}
-            onClick={() => setFilter("house")}
-          >
-            <Home className="h-4 w-4 inline mr-1" />
-            By House
-          </button>
-          <button
-            className={`px-3 py-1.5 rounded-md text-sm font-medium ${
-              filter === "year"
-                ? "bg-indigo-600 text-white"
-                : "bg-gray-100 text-gray-800 hover:bg-gray-200"
-            }`}
-            onClick={() => setFilter("year")}
-          >
-            <Calendar className="h-4 w-4 inline mr-1" />
-            By Year
-          </button>
-        </div>
-
-        <div className="mt-4">
-          <div className="relative">
-            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-              <Search className="h-5 w-5 text-gray-400" />
-            </div>
-            <input
-              type="text"
-              className="block w-full pl-10 pr-3 py-2 border border-gray-300 rounded-md leading-5 bg-white placeholder-gray-500 focus:outline-none focus:placeholder-gray-400 focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm"
-              placeholder={`Search by ${filter}...`}
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
+          <div className="flex space-x-2">
+            {canExportAnalytics && (
+              <>
+                <button
+                  onClick={handleExportExcel}
+                  className="flex items-center px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+                >
+                  <FileSpreadsheet className="h-4 w-4 mr-2" />
+                  Export
+                </button>
+                <button
+                  onClick={handlePrint}
+                  className="flex items-center px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+                >
+                  <Printer className="h-4 w-4 mr-2" />
+                  Print
+                </button>
+              </>
+            )}
           </div>
         </div>
       </div>
 
-      {/* Analytics cards */}
-      {metrics && (
-        <>
-          {/* Key metrics */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="bg-white p-4 rounded-lg shadow-md">
-              <div className="flex items-center">
-                <div className="p-3 rounded-full bg-indigo-100 text-indigo-600">
-                  <Users className="h-6 w-6" />
-                </div>
-                <div className="ml-4">
-                  <p className="text-sm font-medium text-gray-500">
-                    Total Votes
-                  </p>
-                  <p className="text-2xl font-semibold text-gray-900">
-                    {metrics.totalVotes || 0}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white p-4 rounded-lg shadow-md">
-              <div className="flex items-center">
-                <div className="p-3 rounded-full bg-green-100 text-green-600">
-                  <Users className="h-6 w-6" />
-                </div>
-                <div className="ml-4">
-                  <p className="text-sm font-medium text-gray-500">
-                    Eligible Voters
-                  </p>
-                  <p className="text-2xl font-semibold text-gray-900">
-                    {metrics.totalEligibleVoters || 0}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white p-4 rounded-lg shadow-md">
-              <div className="flex items-center">
-                <div className="p-3 rounded-full bg-blue-100 text-blue-600">
-                  <DollarSign className="h-6 w-6" />
-                </div>
-                <div className="ml-4">
-                  <p className="text-sm font-medium text-gray-500">Turnout</p>
-                  <p className="text-2xl font-semibold text-gray-900">
-                    {safeNumber(metrics.turnoutPercentage || 0)}%
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-white p-4 rounded-lg shadow-md">
-              <div className="flex items-center">
-                <div className="p-3 rounded-full bg-purple-100 text-purple-600">
-                  <Award className="h-6 w-6" />
-                </div>
-                <div className="ml-4">
-                  <p className="text-sm font-medium text-gray-500">
-                    Avg. Per Position
-                  </p>
-                  <p className="text-2xl font-semibold text-gray-900">
-                    {safeNumber(metrics.averageVotesPerPosition || 0)}
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Main analysis */}
-          <div className="bg-white p-4 rounded-lg shadow-md">
-            <h3 className="text-lg font-medium text-gray-900 mb-4">
-              {filter === "class"
-                ? "Voting by Class"
-                : filter === "house"
-                ? "Voting by House"
-                : "Voting by Year"}
-            </h3>
-
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th
-                      scope="col"
-                      className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-                    >
-                      {filter === "class"
-                        ? "Class"
-                        : filter === "house"
-                        ? "House"
-                        : "Year"}
-                    </th>
-                    <th
-                      scope="col"
-                      className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-                    >
-                      Votes
-                    </th>
-                    <th
-                      scope="col"
-                      className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-                    >
-                      Percentage
-                    </th>
-                    {chartType === "bar" && (
-                      <th
-                        scope="col"
-                        className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider"
-                      >
-                        Distribution
-                      </th>
-                    )}
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-200">
-                  {getFilteredData().map((item, index) => (
-                    <tr key={index} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 whitespace-nowrap">
+      {/* Results */}
+      <div className="bg-white rounded-lg shadow-md overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Voter
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Class
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Date/Time
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Votes Cast
+                </th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {filteredVoters.map((voter) => (
+                <tr key={voter.id} className="hover:bg-gray-50">
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <div className="flex items-center">
+                      <div className="flex-shrink-0 h-10 w-10 flex items-center justify-center bg-indigo-100 rounded-full">
+                        <Users className="h-5 w-5 text-indigo-600" />
+                      </div>
+                      <div className="ml-4">
                         <div className="text-sm font-medium text-gray-900">
-                          {filter === "class"
-                            ? item.class
-                            : filter === "house"
-                            ? item.house
-                            : item.year || "Unknown"}
+                          {voter.name}
                         </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm text-gray-900">
-                          {item.count}
+                        <div className="text-sm text-gray-500">
+                          {voter.voterId}
                         </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm text-gray-900">
-                          {safeNumber(item.percentage)}%
-                        </div>
-                      </td>
-                      {chartType === "bar" && (
-                        <td className="px-6 py-4">
-                          <div className="w-full bg-gray-200 rounded-full h-2.5">
-                            <div
-                              className="bg-indigo-600 h-2.5 rounded-full"
-                              style={{ width: `${item.percentage}%` }}
-                            ></div>
-                          </div>
-                        </td>
-                      )}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* Timeline analysis */}
-          <div className="bg-white p-4 rounded-lg shadow-md">
-            <h3 className="text-lg font-medium text-gray-900 mb-4 flex items-center">
-              <Clock className="h-5 w-5 text-indigo-500 mr-2" />
-              Voting Timeline
-            </h3>
-
-            <div className="h-64">
-              {/* Here, you would normally use a charting library like recharts or Chart.js */}
-              {/* For simplicity, I'm using a basic representation */}
-              <div className="h-full flex items-end space-x-1">
-                {metrics.votingTimeline.map((item, index) => {
-                  const maxCount = Math.max(
-                    ...metrics.votingTimeline.map((t) => t.count)
-                  );
-                  const height =
-                    maxCount > 0 ? (item.count / maxCount) * 100 : 0;
-
-                  return (
-                    <div
-                      key={index}
-                      className="flex flex-col items-center flex-1"
-                    >
-                      <div
-                        className="w-full bg-indigo-500 rounded-t"
-                        style={{ height: `${height}%` }}
-                      ></div>
-                      <div className="text-xs text-gray-500 mt-1">
-                        {item.hour}:00
                       </div>
                     </div>
-                  );
-                })}
-              </div>
-            </div>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <div className="text-sm text-gray-900">{voter.class}</div>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <div className="flex items-center text-sm text-gray-900">
+                      <Calendar className="h-4 w-4 mr-1 text-gray-400" />
+                      {formatDateTime(voter.votedAt)}
+                    </div>
+                  </td>
+                  <td className="px-6 py-4">
+                    <div className="space-y-1">
+                      {Object.entries(voter.votedFor).map(
+                        ([positionId, candidate], index) => (
+                          <div
+                            key={positionId || `unknown-${index}`}
+                            className="text-sm"
+                          >
+                            <span className="text-gray-500">
+                              {getPositionName(positionId)}:
+                            </span>{" "}
+                            <span className="text-gray-900 font-medium">
+                              {getCandidateName(candidate)}
+                            </span>
+                          </div>
+                        )
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
 
-            <div className="mt-4 text-sm text-gray-500 text-center">
-              Hourly vote distribution throughout the day
-            </div>
-          </div>
-        </>
-      )}
-
-      {/* Empty state if no data */}
-      {!isLoading &&
-        !error &&
-        (!metrics ||
-          (filter === "class" && metrics.byClass.length === 0) ||
-          (filter === "house" && metrics.byHouse.length === 0) ||
-          (filter === "year" && metrics.byYear.length === 0)) && (
-          <div className="bg-white rounded-lg p-8 text-center">
-            <Filter className="h-12 w-12 text-indigo-300 mx-auto mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 mb-2">
-              No voting data available
-            </h3>
-            <p className="text-gray-500 mb-6">
-              There's no voting data to analyze for the selected filters.
-            </p>
-            <button
-              onClick={() => {
-                setSelectedPosition("all");
-                setDateRange({
-                  from: new Date(new Date().setDate(new Date().getDate() - 7))
-                    .toISOString()
-                    .split("T")[0],
-                  to: new Date().toISOString().split("T")[0],
-                });
-                setFilter("class");
-                setSearchTerm("");
-              }}
-              className="inline-flex items-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-            >
-              Reset Filters
-            </button>
+        {filteredVoters.length === 0 && (
+          <div className="text-center py-8 text-gray-500">
+            No results found matching your criteria
           </div>
         )}
+      </div>
     </div>
   );
 };
