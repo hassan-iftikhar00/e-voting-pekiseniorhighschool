@@ -33,6 +33,7 @@ import {
   X,
   Edit,
   Plus,
+  Loader, // Add this import for the loading spinner
 } from "lucide-react";
 import { useSettings } from "../../context/SettingsContext";
 import { useUser } from "../../context/UserContext";
@@ -50,6 +51,9 @@ interface ElectionSettings {
   systemName: string;
   systemLogo?: string;
   electionTitle?: string;
+  schoolName?: string;
+  companyLogo?: string;
+  schoolLogo?: string;
 }
 
 const ElectionSettingsManager: React.FC = () => {
@@ -67,6 +71,7 @@ const ElectionSettingsManager: React.FC = () => {
     systemName: "Peki Senior High School Elections",
     systemLogo: "",
     electionTitle: "Student Council Election 2025",
+    schoolName: "Peki Senior High School",
   });
 
   const [isEditing, setIsEditing] = useState(false);
@@ -83,7 +88,7 @@ const ElectionSettingsManager: React.FC = () => {
     votingPercentage: 0,
   });
   const [activeTab, setActiveTab] = useState<
-    "organization" | "system" | "backup" | "election"
+    "organization" | "backup" | "election"
   >("organization");
   const [elections, setElections] = useState<any[]>([]);
 
@@ -164,6 +169,7 @@ const ElectionSettingsManager: React.FC = () => {
         systemLogo: formattedData.systemLogo || "",
         electionTitle:
           formattedData.electionTitle || "Student Council Election 2025",
+        schoolName: formattedData.schoolName || "Peki Senior High School",
       });
     } catch (error: any) {
       console.error("Error fetching settings:", error);
@@ -262,7 +268,13 @@ const ElectionSettingsManager: React.FC = () => {
         {
           method: "PUT",
           headers,
-          body: JSON.stringify(settings),
+          body: JSON.stringify({
+            ...settings,
+            companyName: settings.systemName, // Map systemName to companyName
+            schoolName: settings.schoolName, // Send schoolName separately
+            companyLogo: settings.companyLogo, // Send companyLogo separately
+            schoolLogo: settings.schoolLogo, // Send schoolLogo separately
+          }),
         }
       );
 
@@ -391,12 +403,11 @@ const ElectionSettingsManager: React.FC = () => {
       const reader = new FileReader();
       reader.onload = () => {
         const logoString = reader.result as string;
-        // This is simplified as we don't have the updateSettings function with this signature
-        // In a real implementation, you'd update the state and handle API calls
-        setSettings({
-          ...settings,
-          systemLogo: logoString,
-        });
+        if (type === "company") {
+          setSettings({ ...settings, companyLogo: logoString });
+        } else if (type === "school") {
+          setSettings({ ...settings, schoolLogo: logoString });
+        }
       };
       reader.readAsDataURL(file);
     }
@@ -411,14 +422,6 @@ const ElectionSettingsManager: React.FC = () => {
       description: "Company and school settings",
       gradient: "from-blue-500/20 to-indigo-500/20",
       activeGradient: "from-blue-500 to-indigo-600",
-    },
-    {
-      id: "system",
-      name: "System",
-      icon: Cog,
-      description: "General system configuration",
-      gradient: "from-emerald-500/20 to-green-500/20",
-      activeGradient: "from-emerald-500 to-green-600",
     },
     {
       id: "backup",
@@ -665,16 +668,22 @@ const ElectionSettingsManager: React.FC = () => {
                   <button
                     onClick={() => setIsEditing(false)}
                     className="inline-flex items-center px-4 py-2 border border-gray-300 text-sm rounded-md shadow-sm text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition-colors duration-200"
+                    disabled={isLoading}
                   >
                     <XCircle className="h-4 w-4 mr-2" />
                     Cancel
                   </button>
                   <button
                     onClick={handleSave}
+                    disabled={isLoading}
                     className="inline-flex items-center px-4 py-2 border border-transparent text-sm rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                   >
-                    <Save className="h-4 w-4 mr-2" />
-                    Save Changes
+                    {isLoading ? (
+                      <Loader className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <Save className="h-4 w-4 mr-2" />
+                    )}
+                    {isLoading ? "Saving..." : "Save Changes"}
                   </button>
                 </div>
               )}
@@ -714,7 +723,7 @@ const ElectionSettingsManager: React.FC = () => {
       )}
 
       {/* Settings Navigation */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {tabs.map((tab) => (
           <button
             key={tab.id}
@@ -783,6 +792,24 @@ const ElectionSettingsManager: React.FC = () => {
         {/* Organization Settings */}
         {activeTab === "organization" && (
           <div className="p-6 space-y-6">
+            {/* Prominent Edit Settings Banner */}
+            {!isEditing && (
+              <div className="p-6 bg-yellow-100 border-2 border-yellow-400 rounded-md mb-6">
+                <div className="flex items-center">
+                  <AlertCircle className="h-6 w-6 text-yellow-600 mr-3 flex-shrink-0" />
+                  <div>
+                    <p className="text-lg font-semibold text-yellow-800">
+                      To make changes to the settings, click the "Edit Settings"
+                      button located in the top right corner.
+                    </p>
+                    <p className="text-sm text-yellow-700">
+                      Ensure you save your changes after editing to apply them
+                      successfully.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
             <div className="border-b pb-4">
               <h3 className="text-lg font-medium text-gray-900 flex items-center">
                 <School className="h-5 w-5 text-indigo-500 mr-2" />
@@ -813,9 +840,9 @@ const ElectionSettingsManager: React.FC = () => {
                 <input
                   type="text"
                   className="w-full p-2 border border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500"
-                  value={settings.systemName}
+                  value={settings.schoolName}
                   onChange={(e) =>
-                    setSettings({ ...settings, systemName: e.target.value })
+                    setSettings({ ...settings, schoolName: e.target.value })
                   }
                   disabled={!isEditing}
                 />
@@ -862,9 +889,9 @@ const ElectionSettingsManager: React.FC = () => {
                 </label>
                 <div className="flex items-center space-x-4">
                   <div className="w-32 h-32 border-2 border-dashed border-gray-300 rounded-lg flex items-center justify-center bg-gray-50">
-                    {settings.systemLogo ? (
+                    {settings.schoolLogo ? (
                       <img
-                        src={settings.systemLogo}
+                        src={settings.schoolLogo}
                         alt="School Logo"
                         className="max-w-full max-h-full object-contain"
                       />
@@ -892,119 +919,27 @@ const ElectionSettingsManager: React.FC = () => {
           </div>
         )}
 
-        {/* System Settings */}
-        {activeTab === "system" && (
-          <div className="p-6 space-y-6">
-            <div className="border-b pb-4">
-              <h3 className="text-lg font-medium text-gray-900 flex items-center">
-                <Cog className="h-5 w-5 text-indigo-500 mr-2" />
-                System Configuration
-              </h3>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  System Name
-                </label>
-                <input
-                  type="text"
-                  name="systemName"
-                  className={`w-full p-2 border border-gray-300 rounded-md ${
-                    !isEditing ? "bg-gray-100 cursor-not-allowed" : "bg-white"
-                  }`}
-                  value={settings.systemName}
-                  onChange={handleInputChange}
-                  disabled={!isEditing}
-                  placeholder="e.g., Peki Senior High School Elections"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Time Zone
-                </label>
-                <select
-                  className={`w-full p-2 border border-gray-300 rounded-md ${
-                    !isEditing ? "bg-gray-100 cursor-not-allowed" : "bg-white"
-                  }`}
-                  value="Africa/Accra"
-                  disabled={!isEditing}
-                >
-                  <option value="Africa/Accra">Africa/Accra (GMT)</option>
-                  <option value="Africa/Lagos">Africa/Lagos (GMT+1)</option>
-                  <option value="Africa/Cairo">Africa/Cairo (GMT+2)</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="border-t pt-4 mt-4">
-              <h4 className="font-medium text-gray-700 mb-2">
-                System Settings
-              </h4>
-
-              <div className="space-y-3">
-                <div className="flex items-center">
-                  <input
-                    type="checkbox"
-                    id="allowVoterRegistration"
-                    name="allowVoterRegistration"
-                    className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
-                    checked={settings.allowVoterRegistration}
-                    onChange={handleInputChange}
-                    disabled={!isEditing}
-                  />
-                  <label
-                    htmlFor="allowVoterRegistration"
-                    className="ml-2 block text-sm text-gray-900"
-                  >
-                    Allow voter self-registration
-                  </label>
-                </div>
-
-                <div className="flex items-center">
-                  <input
-                    type="checkbox"
-                    id="requireEmailVerification"
-                    name="requireEmailVerification"
-                    className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
-                    checked={settings.requireEmailVerification}
-                    onChange={handleInputChange}
-                    disabled={!isEditing}
-                  />
-                  <label
-                    htmlFor="requireEmailVerification"
-                    className="ml-2 block text-sm text-gray-900"
-                  >
-                    Require email verification for voters
-                  </label>
-                </div>
-
-                <div className="flex items-center">
-                  <input
-                    type="checkbox"
-                    id="resultsPublished"
-                    name="resultsPublished"
-                    className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
-                    checked={settings.resultsPublished}
-                    onChange={handleInputChange}
-                    disabled={!isEditing}
-                  />
-                  <label
-                    htmlFor="resultsPublished"
-                    className="ml-2 block text-sm text-gray-900"
-                  >
-                    Publish results to voters
-                  </label>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
         {/* Backup & Restore Settings */}
         {activeTab === "backup" && (
           <div className="p-6 space-y-6">
+            {/* Prominent Edit Settings Banner */}
+            {!isEditing && (
+              <div className="p-6 bg-yellow-100 border-2 border-yellow-400 rounded-md mb-6">
+                <div className="flex items-center">
+                  <AlertCircle className="h-6 w-6 text-yellow-600 mr-3 flex-shrink-0" />
+                  <div>
+                    <p className="text-lg font-semibold text-yellow-800">
+                      To make changes to the settings, click the "Edit Settings"
+                      button located in the top right corner.
+                    </p>
+                    <p className="text-sm text-yellow-700">
+                      Ensure you save your changes after editing to apply them
+                      successfully.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
             <div className="border-b pb-4">
               <h3 className="text-lg font-medium text-gray-900 flex items-center">
                 <Database className="h-5 w-5 text-indigo-500 mr-2" />
@@ -1115,27 +1050,30 @@ const ElectionSettingsManager: React.FC = () => {
         {/* Election Settings */}
         {activeTab === "election" && (
           <div className="p-6 space-y-6">
+            {/* Prominent Edit Settings Banner */}
+            {!isEditing && (
+              <div className="p-6 bg-yellow-100 border-2 border-yellow-400 rounded-md mb-6">
+                <div className="flex items-center">
+                  <AlertCircle className="h-6 w-6 text-yellow-600 mr-3 flex-shrink-0" />
+                  <div>
+                    <p className="text-lg font-semibold text-yellow-800">
+                      To make changes to the settings, click the "Edit Settings"
+                      button located in the top right corner.
+                    </p>
+                    <p className="text-sm text-yellow-700">
+                      Ensure you save your changes after editing to apply them
+                      successfully.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
             <div className="border-b pb-4">
               <h3 className="text-lg font-medium text-gray-900 flex items-center">
                 <Vote className="h-5 w-5 text-indigo-500 mr-2" />
                 Election Parameters
               </h3>
             </div>
-
-            {/* Add back the edit settings prompt banner */}
-            {!isEditing && (
-              <div className="p-4 bg-blue-50 border border-blue-200 rounded-md mb-4">
-                <div className="flex">
-                  <Info className="h-5 w-5 text-blue-500 mr-3 flex-shrink-0" />
-                  <div>
-                    <p className="text-sm text-blue-800">
-                      To edit election settings, click the "Edit Settings"
-                      button in the top right corner.
-                    </p>
-                  </div>
-                </div>
-              </div>
-            )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="md:col-span-2">
@@ -1299,10 +1237,15 @@ const ElectionSettingsManager: React.FC = () => {
                 {isEditing && canEditSettings && (
                   <button
                     onClick={handleSave}
+                    disabled={isLoading}
                     className="inline-flex items-center justify-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700"
                   >
-                    <Save className="h-4 w-4 mr-2" />
-                    Save Changes
+                    {isLoading ? (
+                      <Loader className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <Save className="h-4 w-4 mr-2" />
+                    )}
+                    {isLoading ? "Saving..." : "Save Changes"}
                   </button>
                 )}
               </div>

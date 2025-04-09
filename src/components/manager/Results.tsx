@@ -163,7 +163,7 @@ const Results: React.FC = () => {
     }
   };
 
-  // Fetch election status
+  // Updated fetchElectionStatus function to improve error handling and logging
   const fetchElectionStatus = async () => {
     try {
       // Get authentication token
@@ -173,12 +173,17 @@ const Results: React.FC = () => {
         Authorization: token ? `Bearer ${token}` : "",
       };
 
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10-second timeout
+
       const response = await fetch(
         `${
           import.meta.env.VITE_API_URL || "http://localhost:5000"
         }/api/election/status`,
-        { headers }
+        { headers, signal: controller.signal }
       );
+
+      clearTimeout(timeoutId);
 
       if (!response.ok) {
         if (response.status === 404) {
@@ -191,7 +196,7 @@ const Results: React.FC = () => {
 
       const data = await response.json();
       setElectionStatus(data);
-    } catch (error: any) {
+    } catch (error) {
       console.error("Error fetching election status:", error);
       // Don't show error for this, just use defaults
       setElectionStatus({ isActive: false, resultsPublished: false });

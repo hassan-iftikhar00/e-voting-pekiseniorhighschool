@@ -40,7 +40,6 @@ export const getSettings = async (req, res) => {
       await settings.save();
     }
 
-    console.log("Returning settings:", settings);
     res.json(settings);
   } catch (error) {
     console.error("Error fetching settings:", error);
@@ -81,7 +80,23 @@ export const updateSettings = async (req, res) => {
     }
 
     // Update settings model
-    settings.systemName = systemName;
+    if (systemName) {
+      settings.systemName = systemName;
+    }
+    // Update companyName and schoolName independently
+    if (req.body.companyName) {
+      settings.companyName = req.body.companyName;
+    }
+    if (req.body.schoolName) {
+      settings.schoolName = req.body.schoolName;
+    }
+    // Update companyLogo and schoolLogo independently
+    if (req.body.companyLogo) {
+      settings.companyLogo = req.body.companyLogo;
+    }
+    if (req.body.schoolLogo) {
+      settings.schoolLogo = req.body.schoolLogo;
+    }
     settings.electionTitle = electionTitle;
     settings.votingStartDate = votingStartDate;
     settings.votingEndDate = votingEndDate;

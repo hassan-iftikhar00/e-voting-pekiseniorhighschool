@@ -56,6 +56,22 @@ const SettingSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
+    companyName: {
+      type: String,
+      default: "",
+    },
+    companyLogo: {
+      type: String,
+      default: "",
+    },
+    schoolName: {
+      type: String,
+      default: "",
+    },
+    schoolLogo: {
+      type: String,
+      default: "",
+    },
     // Additional settings can be added here
   },
   { timestamps: true }

@@ -461,20 +461,25 @@ const ElectionManager: React.FC = () => {
               <Menu className="h-6 w-6" />
             </button>
             <div className="flex-1 flex justify-between items-center">
-              <div className="flex items-center">
-                {settings.schoolLogo ? (
-                  <img
-                    src={settings.schoolLogo}
-                    alt="School Logo"
-                    className="h-8 w-8 object-contain"
-                  />
-                ) : (
-                  <School className="h-8 w-8 text-indigo-600" />
-                )}
-                <h1 className="text-lg text-gray-900 ml-3">
-                  {settings.schoolName}
-                </h1>
-              </div>
+              <Link
+                to="/election-manager/setting"
+                className="text-sm font-medium text-indigo-600 hover:text-indigo-500"
+              >
+                <div className="flex items-center">
+                  {settings.schoolLogo ? (
+                    <img
+                      src={settings.schoolLogo}
+                      alt="School Logo"
+                      className="h-8 w-8 object-contain"
+                    />
+                  ) : (
+                    <School className="h-8 w-8 text-indigo-600" />
+                  )}
+                  <h1 className="text-lg text-gray-900 ml-3">
+                    {settings.schoolName}
+                  </h1>
+                </div>
+              </Link>
 
               <div className="flex items-center space-x-4">
                 {/* Election Date & Timer */}

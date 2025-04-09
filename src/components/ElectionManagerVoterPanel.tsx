@@ -288,12 +288,19 @@ const ElectionManager: React.FC = () => {
         }`}
       >
         <div className="flex items-center justify-between h-14 px-4 bg-indigo-950">
-          <div className="flex items-center">
-            <School className="h-7 w-7 text-white" />
-            <span className="ml-2 text-lg font-semibold text-white">
-              {settings.companyName}
-            </span>
-          </div>
+          <Link
+            to="/election-manager/settings"
+            className={`flex items-center hover:!bg-transparent px-2 py-2 bg-transparent text-sm rounded-md ${isActive(
+              "/settings"
+            )}`}
+          >
+            <div className="flex items-center">
+              <School className="h-7 w-7 text-white" />
+              <span className="ml-2 text-lg font-semibold text-white">
+                {settings.companyName}
+              </span>
+            </div>
+          </Link>
           <button
             className="md:hidden text-white"
             onClick={() => setSidebarOpen(false)}
@@ -435,20 +442,27 @@ const ElectionManager: React.FC = () => {
               <Menu className="h-6 w-6" />
             </button>
             <div className="flex-1 flex justify-between items-center">
-              <div className="flex items-center">
-                {settings.schoolLogo ? (
-                  <img
-                    src={settings.schoolLogo}
-                    alt="School Logo"
-                    className="h-8 w-8 object-contain"
-                  />
-                ) : (
-                  <School className="h-8 w-8 text-indigo-600" />
-                )}
-                <h1 className="text-lg text-gray-900 ml-3">
-                  {settings.schoolName}
-                </h1>
-              </div>
+              <Link
+                to="/election-manager/settings"
+                className={`flex items-center hover:!bg-transparent bg-transparent px-2 py-2 text-sm rounded-md ${isActive(
+                  "/settings"
+                )}`}
+              >
+                <div className="flex items-center">
+                  {settings.schoolLogo ? (
+                    <img
+                      src={settings.schoolLogo}
+                      alt="School Logo"
+                      className="h-8 w-8 object-contain"
+                    />
+                  ) : (
+                    <School className="h-8 w-8 text-indigo-600" />
+                  )}
+                  <h1 className="text-lg text-gray-900 ml-3">
+                    {settings.schoolName}
+                  </h1>
+                </div>
+              </Link>
               <div className="flex items-center space-x-4">
                 <div className="flex items-center space-x-2 bg-indigo-50 px-3 py-1.5 rounded-lg text-sm">
                   <Calendar className="h-4 w-4 text-indigo-600" />
@@ -472,7 +486,7 @@ const ElectionManager: React.FC = () => {
                     <Clock className="h-4 w-4 mr-2" />
                     {currentElection?.isActive ? (
                       <span>
-                        Election in progress • Ends in: {timeRemaining}
+                        Election in progreess • Ends in: {timeRemaining}
                       </span>
                     ) : (
                       <span>Election starts in: {timeRemaining}</span>
