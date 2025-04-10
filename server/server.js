@@ -2,6 +2,9 @@ import express from "express";
 import cors from "cors";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
+import path from "path";
+import { fileURLToPath } from "url";
+import fs from "fs";
 import apiRoutes from "./routes/api.js";
 import "./models/ActivityLog.js";
 
@@ -12,12 +15,16 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Updated CORS middleware with better configuration for Render.com
+// CORS middleware with proper configuration for Render.com
 app.use(
   cors({
     origin:
       process.env.NODE_ENV === "production"
-        ? [process.env.ALLOWED_ORIGIN, "https://evoting-frontend.onrender.com"]
+        ? [
+            process.env.ALLOWED_ORIGIN,
+            "https://evoting-frontend.onrender.com",
+            "https://e-voting-frontend-5q4z.onrender.com",
+          ]
         : [
             "http://localhost:3000",
             "http://localhost:5173",
@@ -36,9 +43,11 @@ app.use(
   })
 );
 
+// Body parser middleware
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
+// Basic routes
 app.get("/", (req, res) => {
   res.send("Server is running");
 });
@@ -47,7 +56,7 @@ app.get("/api/test", (req, res) => {
   res.json({ message: "API is accessible" });
 });
 
-// Add health check endpoint
+// Health check endpoint
 app.get("/health", (req, res) => {
   res.status(200).json({
     status: "ok",
@@ -58,20 +67,18 @@ app.get("/health", (req, res) => {
   });
 });
 
-// Add improved error handling for the bulk import endpoint
+// Debug middleware for bulk import
 app.use("/api/voters/bulk", (req, res, next) => {
   console.log("==== BULK IMPORT MIDDLEWARE ====");
   console.log("Request method:", req.method);
   console.log("Request headers:", JSON.stringify(req.headers, null, 2));
 
-  // Print the raw body
   if (req.method === "POST") {
     try {
       const rawBody = JSON.stringify(req.body, null, 2);
       console.log("Raw request body size:", rawBody.length);
       console.log("Request body sample:", rawBody.substring(0, 500));
 
-      // Check for proper format without rejecting immediately
       if (!req.body || !req.body.voters) {
         console.log("⚠️ Warning: Missing voters array in request body");
       } else if (!Array.isArray(req.body.voters)) {
@@ -93,12 +100,10 @@ app.use("/api/voters/bulk", (req, res, next) => {
   next();
 });
 
-// Add performance middleware before routes
+// Performance middleware
 app.use((req, res, next) => {
-  // Add basic performance headers
   res.set("X-Response-Time", `${Date.now()}`);
 
-  // Skip caching for dynamic API responses by default
   if (req.path.startsWith("/api/") && !req.path.includes("/static/")) {
     res.set("Cache-Control", "no-cache, no-store");
   }
@@ -106,11 +111,10 @@ app.use((req, res, next) => {
   next();
 });
 
-// Add a global error handler middleware
+// Global error handler middleware
 app.use((err, req, res, next) => {
   console.error("Global error handler caught:", err);
 
-  // Don't expose stack traces in production
   const error =
     process.env.NODE_ENV === "production"
       ? { message: "Internal server error" }
@@ -122,55 +126,73 @@ app.use((err, req, res, next) => {
   });
 });
 
-// Connect to MongoDB with improved error handling
-console.log("Connecting to MongoDB at:", process.env.MONGODB_URI);
-mongoose
-  .connect(
-    process.env.MONGODB_URI || "mongodb://localhost:27017/eVotingSystem",
-    {
-      // Remove deprecated options
-      retryWrites: true,
-      // Add server timeout to prevent hanging connections
-      serverSelectionTimeoutMS: 30000,
-      // Add connection timeout
-      connectTimeoutMS: 10000,
-      // Add socket timeout
-      socketTimeoutMS: 45000,
-    }
-  )
-  .then(async () => {
-    console.log("Connected to MongoDB");
-    startServer();
-  })
-  .catch((err) => {
-    console.error("MongoDB connection error:", err);
-    // Don't exit in production; let the app try to recover
-    if (process.env.NODE_ENV !== "production") {
-      process.exit(1);
-    }
-  });
-
 // API Routes
 app.use("/api", apiRoutes);
 
 // Serve static files and handle SPA routing in production
 if (process.env.NODE_ENV === "production") {
-  // Serve any static files
-  app.use(express.static("dist"));
+  const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-  // Handle React routing, return all requests to React app
-  app.get("*", function (req, res) {
-    res.sendFile("dist/index.html", { root: "." });
-  });
+  // Check multiple possible build paths
+  const possiblePaths = ["./dist", "../dist", "../../dist"];
+
+  let staticPath = null;
+  for (const path of possiblePaths) {
+    try {
+      const fullPath = fs.realpathSync(path);
+      if (fs.existsSync(fullPath)) {
+        console.log(`Found static files in: ${fullPath}`);
+        staticPath = fullPath;
+        break;
+      }
+    } catch (error) {
+      console.log(`Error checking path ${path}:`, error.message);
+    }
+  }
+
+  if (staticPath) {
+    // Serve static files
+    app.use(express.static(staticPath));
+
+    // Handle SPA routing
+    app.get("*", (req, res) => {
+      res.sendFile(path.join(staticPath, "index.html"));
+    });
+  } else {
+    console.warn("No static files found for production mode!");
+  }
 }
 
-// Update the port configuration to work better with Render.com
-const startServer = () => {
-  const PORT = process.env.PORT || 5000;
+// MongoDB connection with improved error handling
+console.log("Connecting to MongoDB at:", process.env.MONGODB_URI);
+mongoose
+  .connect(
+    process.env.MONGODB_URI || "mongodb://localhost:27017/eVotingSystem",
+    {
+      retryWrites: true,
+      serverSelectionTimeoutMS: 30000,
+      connectTimeoutMS: 10000,
+      socketTimeoutMS: 45000,
+    }
+  )
+  .then(() => {
+    console.log("Connected to MongoDB");
+    startServer();
+  })
+  .catch((err) => {
+    console.error("MongoDB connection error:", err);
+    if (process.env.NODE_ENV !== "production") {
+      process.exit(1);
+    }
+  });
 
+// Server startup function
+const startServer = () => {
   const server = app.listen(PORT, "0.0.0.0", () => {
     console.log(
-      `Server running in ${process.env.NODE_ENV} mode on port ${PORT}`
+      `Server running in ${
+        process.env.NODE_ENV || "development"
+      } mode on port ${PORT}`
     );
     if (process.env.NODE_ENV !== "production") {
       console.log(`Access server at http://localhost:${PORT}`);

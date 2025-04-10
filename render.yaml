@@ -1,7 +1,7 @@
 services:
   # Backend web service
   - type: web
-    name: evoting-api
+    name: e-voting-api
     env: node
     plan: free
     buildCommand: npm install
@@ -16,14 +16,14 @@ services:
       - key: JWT_SECRET
         sync: false # You'll set this in Render dashboard
       - key: ALLOWED_ORIGIN
-        value: https://evoting-frontend.onrender.com
+        value: https://e-voting-frontend-5q4z.onrender.com
 
   # Frontend static site
   - type: static
-    name: evoting-frontend
+    name: e-voting-frontend
     plan: free
     buildCommand: npm run render-build
     publishDir: dist
     envVars:
       - key: VITE_API_URL
-        value: https://evoting-api.onrender.com
+        value: https://e-voting-api-jsfc.onrender.com
