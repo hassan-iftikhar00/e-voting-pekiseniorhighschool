@@ -39,6 +39,8 @@ const App: React.FC = () => {
                         path="/election-manager/*"
                         element={<ElectionManagerVoterPanel />}
                       />
+                      {/* Add this catchall route */}
+                      <Route path="*" element={<Navigate to="/" replace />} />
                     </Routes>
                   </main>
                 </div>
