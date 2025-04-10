@@ -26,6 +26,44 @@ import { getCandidatesForVoter } from "../controllers/candidateController.js";
 
 const router = express.Router();
 
+// Simple test endpoint to check which port is active - NO AUTH REQUIRED
+router.get("/server-info", (req, res) => {
+  // Add CORS headers for diagnostics
+  res.set("Access-Control-Allow-Origin", "*");
+  res.set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+  res.set("Access-Control-Max-Age", "600");
+
+  // Send minimal payload for quick response
+  res.json({
+    status: "online",
+    port: process.env.PORT || 5000,
+    timestamp: Date.now(),
+    serverTime: new Date().toISOString(),
+    version: process.env.npm_package_version || "1.0.0",
+  });
+});
+
+// Also support HEAD requests for lightweight checks
+router.head("/server-info", (req, res) => {
+  res.set("Access-Control-Allow-Origin", "*");
+  res.set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+  res.set("Access-Control-Max-Age", "600");
+  res.set("X-Server-Time", new Date().toISOString());
+  res.set("X-Server-Status", "online");
+  res.status(200).end();
+});
+
+// Add health check endpoint
+router.get("/health", (req, res) => {
+  res.status(200).json({
+    status: "ok",
+    timestamp: Date.now(),
+    uptime: process.uptime(),
+    mongodb:
+      mongoose.connection.readyState === 1 ? "connected" : "disconnected",
+  });
+});
+
 // Election routes
 router.get("/elections/stats", electionController.getElectionStats);
 router.get("/elections/status", electionController.getElectionStatus);

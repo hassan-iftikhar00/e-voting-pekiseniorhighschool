@@ -18,18 +18,13 @@ const PORT = process.env.PORT || 5000;
 // CORS middleware with proper configuration for Render.com
 app.use(
   cors({
-    origin:
-      process.env.NODE_ENV === "production"
-        ? [
-            process.env.ALLOWED_ORIGIN,
-            "https://evoting-frontend.onrender.com",
-            "https://e-voting-frontend-5q4z.onrender.com",
-          ]
-        : [
-            "http://localhost:3000",
-            "http://localhost:5173",
-            "http://127.0.0.1:5173",
-          ],
+    origin: [
+      "https://e-voting-frontend-5q4z.onrender.com",
+      "http://localhost:3000",
+      "http://localhost:5173",
+      "http://127.0.0.1:5173",
+      process.env.ALLOWED_ORIGIN, // Also keep this for flexibility
+    ],
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD"],
     allowedHeaders: [
       "Content-Type",
@@ -37,13 +32,13 @@ app.use(
       "Cache-Control",
       "X-Requested-With",
       "Accept",
-      "Pragma", // Add this header
-      "Origin", // Add this header
-      "If-None-Match", // Add this header
-      "ETag", // Add this header
+      "Pragma",
+      "Origin",
+      "If-None-Match",
+      "ETag",
     ],
     credentials: true,
-    maxAge: 86400, // 24 hours in seconds
+    maxAge: 86400,
     preflightContinue: false,
     optionsSuccessStatus: 204,
   })
@@ -58,11 +53,48 @@ app.get("/", (req, res) => {
   res.send("Server is running");
 });
 
-app.get("/api/test", (req, res) => {
-  res.json({ message: "API is accessible" });
+// API Routes - Mount apiRoutes to /api
+app.use("/api", apiRoutes);
+
+// Add the server-info and health endpoints with /api prefix
+// This duplicates them for backward compatibility
+app.get("/api/server-info", (req, res) => {
+  res.set("Access-Control-Allow-Origin", "*");
+  res.set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+  res.set("Access-Control-Max-Age", "600");
+  res.json({
+    status: "online",
+    port: process.env.PORT || 5000,
+    timestamp: Date.now(),
+    serverTime: new Date().toISOString(),
+    version: process.env.npm_package_version || "1.0.0",
+  });
 });
 
-// Health check endpoint
+app.get("/api/health", (req, res) => {
+  res.status(200).json({
+    status: "ok",
+    timestamp: Date.now(),
+    uptime: process.uptime(),
+    mongodb:
+      mongoose.connection.readyState === 1 ? "connected" : "disconnected",
+  });
+});
+
+// Also keep the original routes for backward compatibility
+app.get("/server-info", (req, res) => {
+  res.set("Access-Control-Allow-Origin", "*");
+  res.set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+  res.set("Access-Control-Max-Age", "600");
+  res.json({
+    status: "online",
+    port: process.env.PORT || 5000,
+    timestamp: Date.now(),
+    serverTime: new Date().toISOString(),
+    version: process.env.npm_package_version || "1.0.0",
+  });
+});
+
 app.get("/health", (req, res) => {
   res.status(200).json({
     status: "ok",
@@ -132,40 +164,12 @@ app.use((err, req, res, next) => {
   });
 });
 
-// API Routes - These must come BEFORE the SPA handling
-app.use("/api", apiRoutes);
-
-// Server info endpoint - Add a standalone endpoint for health checks
-app.get("/server-info", (req, res) => {
-  res.set("Access-Control-Allow-Origin", "*");
-  res.set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
-  res.set("Access-Control-Max-Age", "600");
-  res.json({
-    status: "online",
-    port: process.env.PORT || 5000,
-    timestamp: Date.now(),
-    serverTime: new Date().toISOString(),
-    version: process.env.npm_package_version || "1.0.0",
-  });
-});
-
-// Health check - Keep this outside of API routes for better monitoring
-app.get("/health", (req, res) => {
-  res.status(200).json({
-    status: "ok",
-    timestamp: Date.now(),
-    uptime: process.uptime(),
-    mongodb:
-      mongoose.connection.readyState === 1 ? "connected" : "disconnected",
-  });
-});
-
 // Serve static files and handle SPA routing in production
 if (process.env.NODE_ENV === "production") {
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
   // Check multiple possible build paths
-  const possiblePaths = ["./dist", "../dist", "../../dist"];
+  const possiblePaths = ["./dist", "../dist", "../../dist", "./server/dist"];
 
   let staticPath = null;
   for (const path of possiblePaths) {
