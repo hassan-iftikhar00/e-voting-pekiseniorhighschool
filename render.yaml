@@ -1,5 +1,5 @@
 services:
-  # Backend web service
+  # Backend API
   - type: web
     name: e-voting-api
     env: node
@@ -15,13 +15,17 @@ services:
         value: https://e-voting-frontend-5q4z.onrender.com
       - fromGroup: mongodb-config
 
-  # Frontend static site
+  # Frontend - static site
   - type: web
     name: e-voting-frontend
     env: static
     plan: free
     buildCommand: npm install && npm run build
     staticPublishPath: ./dist
+    headers:
+      - path: /*
+        name: Cache-Control
+        value: no-cache
     routes:
       - type: rewrite
         source: /*

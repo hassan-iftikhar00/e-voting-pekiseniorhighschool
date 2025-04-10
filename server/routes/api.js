@@ -23,10 +23,12 @@ import User from "../models/User.js"; // Add this import for the User model
 import Setting from "../models/Setting.js"; // Add this import for the Setting model
 import Election from "../models/Election.js"; // Add this import for the Election model
 import { getCandidatesForVoter } from "../controllers/candidateController.js";
+import mongoose from "mongoose";
 
 const router = express.Router();
 
 // Simple test endpoint to check which port is active - NO AUTH REQUIRED
+// Define this ONCE at the top of the file and remove duplicates below
 router.get("/server-info", (req, res) => {
   // Add CORS headers for diagnostics
   res.set("Access-Control-Allow-Origin", "*");
@@ -43,7 +45,7 @@ router.get("/server-info", (req, res) => {
   });
 });
 
-// Also support HEAD requests for lightweight checks
+// HEAD request version - define ONCE
 router.head("/server-info", (req, res) => {
   res.set("Access-Control-Allow-Origin", "*");
   res.set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
@@ -454,33 +456,6 @@ router.get(
   checkPermission({ page: "analytics", action: "view" }),
   analyticsController.getPositionResults
 );
-
-// Simple test endpoint to check which port is active - NO AUTH REQUIRED
-router.get("/server-info", (req, res) => {
-  // Add CORS headers for diagnostics
-  res.set("Access-Control-Allow-Origin", "*");
-  res.set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
-  res.set("Access-Control-Max-Age", "600");
-
-  // Send minimal payload for quick response
-  res.json({
-    status: "online",
-    port: process.env.PORT || 5000,
-    timestamp: Date.now(),
-    serverTime: new Date().toISOString(),
-    version: process.env.npm_package_version || "1.0.0",
-  });
-});
-
-// Also support HEAD requests for lightweight checks
-router.head("/server-info", (req, res) => {
-  res.set("Access-Control-Allow-Origin", "*");
-  res.set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
-  res.set("Access-Control-Max-Age", "600");
-  res.set("X-Server-Time", new Date().toISOString());
-  res.set("X-Server-Status", "online");
-  res.status(200).end();
-});
 
 // Add a simplified version of the bulk import endpoint
 router.post("/voters/bulk-simple", async (req, res) => {
