@@ -37,9 +37,15 @@ app.use(
       "Cache-Control",
       "X-Requested-With",
       "Accept",
+      "Pragma", // Add this header
+      "Origin", // Add this header
+      "If-None-Match", // Add this header
+      "ETag", // Add this header
     ],
     credentials: true,
     maxAge: 86400, // 24 hours in seconds
+    preflightContinue: false,
+    optionsSuccessStatus: 204,
   })
 );
 
