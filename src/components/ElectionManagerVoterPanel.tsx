@@ -117,25 +117,7 @@ const ElectionManager: React.FC = () => {
     "not-started" | "active" | "ended"
   >("not-started");
 
-  const fetchCurrentElection = async () => {
-    try {
-      const response = await fetch(
-        `${
-          import.meta.env.VITE_API_URL || "http://localhost:5000"
-        }/api/election/status`
-      );
-
-      if (!response.ok) {
-        throw new Error(`Failed to fetch election status: ${response.status}`);
-      }
-
-      const data = await response.json();
-      setCurrentElection(data);
-    } catch (error) {
-      console.error("Error fetching election data:", error);
-    }
-  };
-
+  // Add this formatElectionDate function
   const formatElectionDate = (dateString?: string) => {
     if (!dateString) return "Unknown date";
 
@@ -152,6 +134,55 @@ const ElectionManager: React.FC = () => {
     }
   };
 
+  const fetchCurrentElection = async () => {
+    try {
+      const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:5000";
+      const response = await fetch(
+        `${apiUrl}/api/election/status?timestamp=${new Date().getTime()}`,
+        {
+          headers: {
+            "Cache-Control": "no-cache",
+            Pragma: "no-cache",
+          },
+          credentials: "include",
+        }
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(
+          `Failed to fetch election status: ${response.status}. ${errorText}`
+        );
+      }
+
+      const data = await response.json();
+      console.log("Fetched election data:", data);
+
+      // Check critical fields for timer calculation
+      if (data.isActive) {
+        console.log("Active election details:", {
+          endDate: data.endDate,
+          date: data.date,
+          endTime: data.endTime,
+        });
+      }
+
+      setCurrentElection(data);
+    } catch (error) {
+      console.error("Error fetching election data:", error);
+      // Set some default state so the app doesn't break
+      setCurrentElection({
+        title: "Election",
+        date: new Date().toISOString().split("T")[0],
+        startDate: new Date().toISOString().split("T")[0],
+        endDate: new Date().toISOString().split("T")[0],
+        startTime: "08:00",
+        endTime: "16:00",
+        isActive: false,
+      });
+    }
+  };
+
   const updateTimeRemaining = useCallback(() => {
     if (!currentElection) {
       setTimeRemaining("Loading...");
@@ -163,27 +194,41 @@ const ElectionManager: React.FC = () => {
 
     try {
       if (currentElection.isActive) {
-        // If election is active, calculate time until it ends
+        // For active elections, use the voting end date from settings
+        // which should be properly synchronized with the election data
+        // If endDate is different from date, use endDate for proper calculation
         const dateStr = currentElection.endDate || currentElection.date;
+        console.log("Active election end date:", dateStr);
+
         const [year, month, day] = dateStr.split("-").map(Number);
-        const [hours, minutes] = (currentElection.endTime || "17:00")
+        const [hours, minutes] = (currentElection.endTime || "16:00")
           .split(":")
           .map(Number);
-        targetDate = new Date(year, month - 1, day, hours, minutes);
 
+        // Make sure to create the date correctly (month is 0-indexed in JavaScript)
+        targetDate = new Date(year, month - 1, day, hours, minutes);
+        console.log("Target end date:", targetDate.toLocaleString());
+        console.log("Current date:", now.toLocaleString());
+
+        // Check if the end date is in the past
         if (targetDate <= now) {
+          console.log("End date is in the past");
           setTimeRemaining("Election has ended");
           setElectionStatus("ended");
           return;
         }
       } else {
-        // If election is not active, calculate time until it starts
+        // For inactive elections, calculate time until start
         const dateStr = currentElection.startDate || currentElection.date;
+        console.log("Inactive election start date:", dateStr);
+
         const [year, month, day] = dateStr.split("-").map(Number);
         const [hours, minutes] = (currentElection.startTime || "08:00")
           .split(":")
           .map(Number);
+
         targetDate = new Date(year, month - 1, day, hours, minutes);
+        console.log("Target start date:", targetDate.toLocaleString());
 
         if (targetDate <= now) {
           setTimeRemaining("Election start time has passed");
@@ -191,8 +236,9 @@ const ElectionManager: React.FC = () => {
         }
       }
 
-      // Calculate time difference in milliseconds
+      // Calculate time difference
       const difference = targetDate.getTime() - now.getTime();
+      console.log("Time difference in ms:", difference);
 
       if (difference <= 0) {
         if (currentElection.isActive) {
@@ -204,7 +250,7 @@ const ElectionManager: React.FC = () => {
         return;
       }
 
-      // Convert milliseconds to days, hours, minutes, seconds
+      // Convert to days, hours, minutes, seconds
       const days = Math.floor(difference / (1000 * 60 * 60 * 24));
       const hours = Math.floor(
         (difference % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)
@@ -220,7 +266,7 @@ const ElectionManager: React.FC = () => {
       timeString += `${seconds}s`;
 
       setElectionStatus(currentElection.isActive ? "active" : "not-started");
-      setTimeRemaining(timeString); // Make sure we're setting the time
+      setTimeRemaining(timeString);
     } catch (error) {
       console.error("Error calculating time remaining:", error);
       setTimeRemaining("Time calculation error");
@@ -428,6 +474,21 @@ const ElectionManager: React.FC = () => {
               Settings
             </Link>
           </nav>
+        </div>
+        <div className="p-4 border-t border-indigo-800 mt-auto">
+          <a
+            href="https://hassaniftikhar.vercel.app/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex justify-center items-center w-full font-medium hover:underline transition-colors duration-200"
+          >
+            <span className="text-gray-400 hover:text-gray-300 text-xs">
+              Developed by{"  "}
+            </span>
+            <span className="text-indigo-300 hover:text-indigo-200 text-xs">
+              © Hassan Iftikhar
+            </span>
+          </a>
         </div>
       </div>
 

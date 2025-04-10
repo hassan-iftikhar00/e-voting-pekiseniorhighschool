@@ -143,7 +143,6 @@ const ElectionSettingsManager: React.FC = () => {
       }
 
       const data = await response.json();
-      console.log("Received settings data:", data);
 
       // Format dates if needed for the date inputs (YYYY-MM-DD format)
       const formattedData = {

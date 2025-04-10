@@ -109,30 +109,41 @@ export const getElectionStats = async (req, res) => {
 export const getElectionStatus = async (req, res) => {
   try {
     const election = await Election.findOne({ isCurrent: true });
+
     if (!election) {
       return res.status(404).json({ message: "No active election found" });
     }
 
-    const statusData = {
-      isActive: election.isActive,
-      status: election.isActive ? "active" : "inactive",
-      startDate: election.startDate,
-      endDate: election.endDate,
-      startTime: election.startTime,
-      endTime: election.endTime,
-      settingsStartDate: election.settingsStartDate,
-      settingsEndDate: election.settingsEndDate,
+    // Get settings to ensure we have the most up-to-date dates
+    const settings = await Setting.findOne();
+
+    // Create response with election and possibly override with settings
+    const response = {
+      ...election.toObject(),
+      // For active elections, prefer settings dates if available
+      startDate:
+        election.startDate ||
+        (settings ? settings.votingStartDate : election.date),
+      endDate:
+        election.endDate || (settings ? settings.votingEndDate : election.date),
+      startTime:
+        election.startTime ||
+        (settings ? settings.votingStartTime + ":00" : "08:00:00"),
+      endTime:
+        election.endTime ||
+        (settings ? settings.votingEndTime + ":00" : "16:00:00"),
     };
 
-    // Log only if the status has changed
-    if (JSON.stringify(statusData) !== JSON.stringify(lastLoggedStatus)) {
-      console.log("Sending election status data:", statusData);
-      lastLoggedStatus = statusData; // Update the last logged status
-    }
+    console.log("Sending election status with:", {
+      startDate: response.startDate,
+      endDate: response.endDate,
+      date: response.date,
+      isActive: response.isActive,
+    });
 
-    res.status(200).json(statusData);
+    res.json(response);
   } catch (error) {
-    console.error("Error fetching election status:", error);
+    console.error("Error getting election status:", error);
     res.status(500).json({ message: "Server error", error: error.message });
   }
 };

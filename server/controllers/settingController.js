@@ -1,48 +1,110 @@
 import Setting from "../models/Setting.js";
 import Election from "../models/Election.js";
 
+// Cache for settings to reduce database queries
+let settingsCache = null;
+let settingsCacheTime = null;
+const CACHE_DURATION = 300000; // 5 minutes in milliseconds
+
 // Get all settings
 export const getSettings = async (req, res) => {
   try {
+    // Add performance metrics
+    const startTime = Date.now();
+    console.log(
+      `[PERF][SERVER] Settings request received at ${new Date().toISOString()}`
+    );
+
+    // Check if we have valid cached settings
+    const now = Date.now();
+    if (
+      settingsCache &&
+      settingsCacheTime &&
+      now - settingsCacheTime < CACHE_DURATION
+    ) {
+      console.log(
+        `[PERF][SERVER] Returning cached settings (age: ${
+          (now - settingsCacheTime) / 1000
+        }s)`
+      );
+
+      // Set appropriate caching headers to help client-side caching
+      res.set("Cache-Control", `private, max-age=${CACHE_DURATION / 1000}`);
+      res.set("ETag", `"${settingsCacheTime}"`);
+
+      // Check if client has the latest version
+      const clientETag = req.headers["if-none-match"];
+      if (clientETag === `"${settingsCacheTime}"`) {
+        console.log(
+          `[PERF][SERVER] Client has current version, returning 304 Not Modified`
+        );
+        console.log(`[PERF][SERVER] Total time: ${Date.now() - startTime}ms`);
+        return res.status(304).end(); // Not Modified
+      }
+
+      console.log(`[PERF][SERVER] Total time: ${Date.now() - startTime}ms`);
+      return res.json(settingsCache);
+    }
+
+    // If we need to fetch from database
+    console.log("[PERF][SERVER] Fetching settings from database");
+    const dbFetchStart = Date.now();
+
     // Find settings document or create one if it doesn't exist
-    let settings = await Setting.findOne();
+    let settings = await Setting.findOne().lean().exec();
+    console.log(
+      `[PERF][SERVER] Settings DB fetch took: ${Date.now() - dbFetchStart}ms`
+    );
 
     if (!settings) {
-      console.log("No settings found, creating default settings");
-      settings = await Setting.create(DEFAULT_SETTINGS);
+      console.log("[PERF][SERVER] Creating new settings document");
+      const newSettings = new Setting();
+      await newSettings.save();
+      settings = newSettings.toObject();
     }
 
-    // Get current election for election-specific settings
-    const currentElection = await Election.findOne({ isCurrent: true });
+    // Get current election data to supplement settings
+    const electionFetchStart = Date.now();
+    const currentElection = await Election.findOne({ isCurrent: true })
+      .lean()
+      .exec();
+    console.log(
+      `[PERF][SERVER] Election DB fetch took: ${
+        Date.now() - electionFetchStart
+      }ms`
+    );
+
     if (currentElection) {
-      console.log("Found current election with properties:", {
-        date: currentElection.date,
-        startTime: currentElection.startTime,
-        endTime: currentElection.endTime,
-        isActive: currentElection.isActive,
-        title: currentElection.title,
-      });
-
-      // Sync settings with current election
+      // Synchronize election dates with settings
+      settings.electionDate = currentElection.date;
+      settings.electionStartDate =
+        currentElection.startDate || currentElection.date;
+      settings.electionEndDate =
+        currentElection.endDate || currentElection.date;
+      settings.electionStartTime =
+        currentElection.startTime?.substring(0, 5) || "08:00";
+      settings.electionEndTime =
+        currentElection.endTime?.substring(0, 5) || "17:00";
+      settings.electionTitle = currentElection.title || settings.electionTitle;
       settings.isActive = currentElection.isActive;
-      settings.electionTitle = currentElection.title;
-
-      // If settings doesn't have dates, use the election's date
-      if (!settings.votingStartDate) {
-        settings.votingStartDate = currentElection.date;
-      }
-
-      if (!settings.votingEndDate) {
-        settings.votingEndDate = currentElection.date;
-      }
-
-      // Save any changes
-      await settings.save();
     }
 
-    res.json(settings);
+    // Update the cache with better efficiency
+    settingsCache = settings;
+    settingsCacheTime = now;
+
+    // Set response headers for better client caching
+    res.set("Cache-Control", `private, max-age=${CACHE_DURATION / 1000}`);
+    res.set("ETag", `"${settingsCacheTime}"`);
+
+    console.log(
+      `[PERF][SERVER] Total settings processing time: ${
+        Date.now() - startTime
+      }ms`
+    );
+    res.json(settingsCache);
   } catch (error) {
-    console.error("Error fetching settings:", error);
+    console.error("[PERF][SERVER] Error fetching settings:", error);
     res.status(500).json({ message: "Server error", error: error.message });
   }
 };
@@ -66,7 +128,7 @@ export const updateSettings = async (req, res) => {
       isActive,
     } = req.body;
 
-    console.log("Updating settings with data:", req.body);
+    console.log("Updating settings with:", req.body);
 
     // Validate required fields
     if (!systemName) {
@@ -133,6 +195,17 @@ export const updateSettings = async (req, res) => {
         needsUpdate = true;
       }
 
+      // Update startDate and endDate with the proper values from settings
+      if (votingStartDate && currentElection.startDate !== votingStartDate) {
+        currentElection.startDate = votingStartDate;
+        needsUpdate = true;
+      }
+
+      if (votingEndDate && currentElection.endDate !== votingEndDate) {
+        currentElection.endDate = votingEndDate;
+        needsUpdate = true;
+      }
+
       // Add seconds to time values if not present
       let startTime = votingStartTime;
       if (startTime && !startTime.includes(":")) {
@@ -169,6 +242,8 @@ export const updateSettings = async (req, res) => {
         console.log("Updating election with new settings:", {
           title: currentElection.title,
           date: currentElection.date,
+          startDate: currentElection.startDate,
+          endDate: currentElection.endDate,
           startTime: currentElection.startTime,
           endTime: currentElection.endTime,
           isActive: currentElection.isActive,
@@ -176,6 +251,10 @@ export const updateSettings = async (req, res) => {
         await currentElection.save();
       }
     }
+
+    // Invalidate cache when settings are updated
+    settingsCache = null;
+    settingsCacheTime = null;
 
     res.status(200).json({
       message: "Settings updated successfully",

@@ -87,6 +87,7 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({
   const [authToken, setAuthToken] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
 
   // Initialize from localStorage on mount
   useEffect(() => {
@@ -212,102 +213,77 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({
     }
   };
 
-  // Fix login function to properly handle admin role
   const login = async (username: string, password: string) => {
-    setLoading(true);
     try {
+      setLoading(true);
+      setError("");
       console.log("Attempting login for:", username);
-      const response = await axios.post(`${apiUrl}/api/auth/login`, {
-        username,
-        password,
-      });
 
-      const { token, user: userData } = response.data;
+      // Get API base URL
+      const API_BASE_URL =
+        import.meta.env.VITE_API_URL || "http://localhost:5000";
 
-      // Normalize user data to include both _id and id
-      const normalizedUser = {
-        ...userData,
-        id: userData.id || userData._id, // Make sure id is set
-        isAdmin: isUserAdmin(userData.role),
-      };
-
-      // Store token and user in localStorage
-      localStorage.setItem("authToken", token);
-      localStorage.setItem("user", JSON.stringify(normalizedUser));
-
-      // Store token correctly (ensure it's stored with Bearer prefix)
-      localStorage.setItem("token", token);
-      setAuthToken(token);
-
-      setAuthToken(token);
-      setUser(normalizedUser);
-      setIsAuthenticated(true);
-
-      // Check if this is an admin user
-      const isAdmin = normalizedUser.isAdmin;
-
-      // Call initializer with the token
-      initializeAfterLogin(token, isAdmin);
-
-      // Log login action
-      (async () => {
-        try {
-          await axios.post(
-            `${apiUrl}/api/logs`,
-            {
-              action: "user:login",
-              details: {
-                username: normalizedUser.username,
-                userId: normalizedUser._id,
-                role:
-                  typeof normalizedUser.role === "object"
-                    ? normalizedUser.role?.name
-                    : normalizedUser.role,
-                isAdmin,
-              },
-              resourceType: "user",
-              resourceId: normalizedUser._id,
-            },
-            {
-              headers: {
-                Authorization: `Bearer ${token}`,
-              },
-            }
-          );
-        } catch (logError) {
-          console.log(
-            "Could not create login log, continuing anyway:",
-            logError
-          );
-        }
-      })();
-
-      return { success: true, user: normalizedUser };
-    } catch (error) {
-      console.log("Login error:", error);
-
-      // Clear any partial authentication data
-      localStorage.removeItem("authToken");
-      localStorage.removeItem("user");
-      setAuthToken(null);
-      setUser(null);
-      setIsAuthenticated(false);
-
-      let errorMessage = "An error occurred during login.";
-      if (axios.isAxiosError(error) && error.response) {
-        // Get the error message from the response if possible
-        if (error.response.data && error.response.data.message) {
-          errorMessage = error.response.data.message;
-        } else {
-          errorMessage = `Server error: ${error.response.status}`;
-        }
-      } else if (error instanceof Error) {
-        errorMessage = error.message;
+      // First check if server is reachable
+      try {
+        console.log("[LOGIN] Testing server connection before login attempt");
+        await fetch(`${API_BASE_URL}/api/server-info`, {
+          method: "HEAD",
+          signal: AbortSignal.timeout(3000), // Quick 3 second timeout
+        });
+      } catch (connErr) {
+        console.warn("[LOGIN] Server connection test failed:", connErr);
+        throw new Error(
+          "Server connection failed. Please check your connection and try again."
+        );
       }
 
-      return { success: false, message: errorMessage };
-    } finally {
+      console.log(
+        "[LOGIN] Server connection test passed, proceeding with login"
+      );
+      const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ username, password }),
+        signal: AbortSignal.timeout(15000), // 15 second timeout
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || "Login failed");
+      }
+
+      // Save auth data
+      localStorage.setItem("token", data.token);
+      if (data.user) {
+        localStorage.setItem("user", JSON.stringify(data.user));
+        setUser(data.user);
+      }
+      setIsAuthenticated(true);
       setLoading(false);
+
+      // Return success to allow login component to navigate
+      return { success: true, user: data.user };
+    } catch (err: any) {
+      console.error("Login error:", err);
+
+      // Provide more descriptive error messages based on error type
+      let errorMessage = "Failed to login. Please try again.";
+      if (err.name === "TimeoutError" || err.name === "AbortError") {
+        errorMessage =
+          "Connection to server timed out. Please check your network connection and try again.";
+      } else if (err.message.includes("Server connection failed")) {
+        errorMessage = err.message;
+      } else if (err.message.includes("Failed to fetch")) {
+        errorMessage =
+          "Cannot connect to the authentication server. Please check your connection.";
+      }
+
+      setError(errorMessage);
+      setLoading(false);
+      return { success: false, error: errorMessage };
     }
   };
 

@@ -7,16 +7,35 @@ const Login: React.FC = () => {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
   const { login } = useUser();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
     try {
-      await login(username, password);
-      navigate("/election-manager");
-    } catch (error: any) {
-      setError(error.message || "Invalid credentials");
+      setLoading(true);
+
+      // Call login and await the result to properly handle navigation
+      const result = await login(username, password);
+
+      if (result.success) {
+        // Only navigate on successful login
+        console.log("Login successful, navigating to dashboard");
+
+        // Delay navigation slightly to ensure state updates complete
+        setTimeout(() => {
+          navigate("/election-manager");
+        }, 100);
+      } else {
+        // Show error from login attempt
+        setError(result.message || "Login failed. Please try again.");
+      }
+    } catch (err: any) {
+      setError(err.message || "An unexpected error occurred");
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -83,8 +102,9 @@ const Login: React.FC = () => {
             <button
               type="submit"
               className="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+              disabled={loading}
             >
-              Sign in
+              {loading ? "Signing in..." : "Sign in"}
             </button>
           </div>
         </form>

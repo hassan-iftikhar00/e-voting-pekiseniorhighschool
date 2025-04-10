@@ -3,7 +3,6 @@ import cors from "cors";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
 import apiRoutes from "./routes/api.js";
-import { dropVoteUniqueIndex } from "./models/Vote.js";
 import "./models/ActivityLog.js";
 
 // Load environment variables
@@ -13,8 +12,30 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Middleware
-app.use(cors());
+// Updated CORS middleware with better configuration for Render.com
+app.use(
+  cors({
+    origin:
+      process.env.NODE_ENV === "production"
+        ? [process.env.ALLOWED_ORIGIN, "https://evoting-frontend.onrender.com"]
+        : [
+            "http://localhost:3000",
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+          ],
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD"],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "Cache-Control",
+      "X-Requested-With",
+      "Accept",
+    ],
+    credentials: true,
+    maxAge: 86400, // 24 hours in seconds
+  })
+);
+
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
@@ -24,6 +45,17 @@ app.get("/", (req, res) => {
 
 app.get("/api/test", (req, res) => {
   res.json({ message: "API is accessible" });
+});
+
+// Add health check endpoint
+app.get("/health", (req, res) => {
+  res.status(200).json({
+    status: "ok",
+    timestamp: Date.now(),
+    uptime: process.uptime(),
+    mongodb:
+      mongoose.connection.readyState === 1 ? "connected" : "disconnected",
+  });
 });
 
 // Add improved error handling for the bulk import endpoint
@@ -61,52 +93,88 @@ app.use("/api/voters/bulk", (req, res, next) => {
   next();
 });
 
-// Connect to MongoDB
+// Add performance middleware before routes
+app.use((req, res, next) => {
+  // Add basic performance headers
+  res.set("X-Response-Time", `${Date.now()}`);
+
+  // Skip caching for dynamic API responses by default
+  if (req.path.startsWith("/api/") && !req.path.includes("/static/")) {
+    res.set("Cache-Control", "no-cache, no-store");
+  }
+
+  next();
+});
+
+// Add a global error handler middleware
+app.use((err, req, res, next) => {
+  console.error("Global error handler caught:", err);
+
+  // Don't expose stack traces in production
+  const error =
+    process.env.NODE_ENV === "production"
+      ? { message: "Internal server error" }
+      : { message: err.message, stack: err.stack };
+
+  res.status(err.statusCode || 500).json({
+    success: false,
+    error,
+  });
+});
+
+// Connect to MongoDB with improved error handling
 console.log("Connecting to MongoDB at:", process.env.MONGODB_URI);
 mongoose
-  .connect(process.env.MONGODB_URI || "mongodb://localhost:27017/eVotingSystem")
+  .connect(
+    process.env.MONGODB_URI || "mongodb://localhost:27017/eVotingSystem",
+    {
+      // Remove deprecated options
+      retryWrites: true,
+      // Add server timeout to prevent hanging connections
+      serverSelectionTimeoutMS: 30000,
+      // Add connection timeout
+      connectTimeoutMS: 10000,
+      // Add socket timeout
+      socketTimeoutMS: 45000,
+    }
+  )
   .then(async () => {
     console.log("Connected to MongoDB");
-
-    // Drop the problematic index on server startup
-    await dropVoteUniqueIndex();
-
-    // Start the server
     startServer();
   })
-  .catch((err) => console.error("MongoDB connection error:", err));
+  .catch((err) => {
+    console.error("MongoDB connection error:", err);
+    // Don't exit in production; let the app try to recover
+    if (process.env.NODE_ENV !== "production") {
+      process.exit(1);
+    }
+  });
 
 // API Routes
 app.use("/api", apiRoutes);
 
-// Log all registered routes
-console.log("Registered routes:");
-app._router.stack.forEach((middleware) => {
-  if (middleware.route) {
-    // Routes registered directly
-    console.log(
-      `${Object.keys(middleware.route.methods).join(", ").toUpperCase()} ${
-        middleware.route.path
-      }`
-    );
-  } else if (middleware.name === "router") {
-    // Routes added via router
-    middleware.handle.stack.forEach((handler) => {
-      if (handler.route) {
-        console.log(
-          `${Object.keys(handler.route.methods).join(", ").toUpperCase()} /api${
-            handler.route.path
-          }`
-        );
-      }
-    });
-  }
-});
+// Serve static files and handle SPA routing in production
+if (process.env.NODE_ENV === "production") {
+  // Serve any static files
+  app.use(express.static("dist"));
 
-// Update the port configuration to use a fallback if 5000 is in use
+  // Handle React routing, return all requests to React app
+  app.get("*", function (req, res) {
+    res.sendFile("dist/index.html", { root: "." });
+  });
+}
+
+// Update the port configuration to work better with Render.com
 const startServer = () => {
-  const server = app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+  const PORT = process.env.PORT || 5000;
+
+  const server = app.listen(PORT, "0.0.0.0", () => {
+    console.log(
+      `Server running in ${process.env.NODE_ENV} mode on port ${PORT}`
+    );
+    if (process.env.NODE_ENV !== "production") {
+      console.log(`Access server at http://localhost:${PORT}`);
+    }
   });
 
   server.on("error", (e) => {
@@ -114,7 +182,7 @@ const startServer = () => {
       console.log(`Port ${PORT} is busy, trying ${PORT + 1}...`);
       setTimeout(() => {
         server.close();
-        app.listen(PORT + 1, () => {
+        app.listen(PORT + 1, "0.0.0.0", () => {
           console.log(`Server running on port ${PORT + 1}`);
         });
       }, 1000);

@@ -488,7 +488,7 @@ const Dashboard: React.FC = () => {
         </div>
 
         {stats.recentVoters && stats.recentVoters.length > 0 && (
-          <div className="mt-3 text-center">
+          <div className="mt-3 text-center mb-10">
             <Link
               to="/election-manager/voters"
               className="text-sm font-medium text-indigo-600 hover:text-indigo-500"
@@ -500,7 +500,7 @@ const Dashboard: React.FC = () => {
       </div>
 
       {/* Footer */}
-      <div className="fixed bottom-4 left-0 right-0 py-2 bg-black text-white">
+      <div className="fixed bottom-0 left-0 right-0 py-2 bg-black text-white">
         <div className="flex items-center justify-center text-xs">
           <Shield className="h-3 w-3 mr-1" />
           Monitored by Secured Smart System (Contact +233 24 333 9546)

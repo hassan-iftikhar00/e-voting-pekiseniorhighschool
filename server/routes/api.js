@@ -82,7 +82,17 @@ router.post(
 );
 
 // Settings routes
-router.get("/settings", settingController.getSettings);
+router.get(
+  "/settings",
+  (req, res, next) => {
+    // Add cache headers for better client-side caching
+    res.set("Cache-Control", "private, max-age=30"); // 30 seconds cache
+    res.set("Vary", "Authorization"); // Vary by auth token
+    next();
+  },
+  settingController.getSettings
+);
+
 router.put(
   "/settings",
   authenticateToken,
@@ -409,12 +419,29 @@ router.get(
 
 // Simple test endpoint to check which port is active - NO AUTH REQUIRED
 router.get("/server-info", (req, res) => {
+  // Add CORS headers for diagnostics
+  res.set("Access-Control-Allow-Origin", "*");
+  res.set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+  res.set("Access-Control-Max-Age", "600");
+
+  // Send minimal payload for quick response
   res.json({
     status: "online",
     port: process.env.PORT || 5000,
-    version: "1.0",
-    timestamp: new Date().toISOString(),
+    timestamp: Date.now(),
+    serverTime: new Date().toISOString(),
+    version: process.env.npm_package_version || "1.0.0",
   });
+});
+
+// Also support HEAD requests for lightweight checks
+router.head("/server-info", (req, res) => {
+  res.set("Access-Control-Allow-Origin", "*");
+  res.set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+  res.set("Access-Control-Max-Age", "600");
+  res.set("X-Server-Time", new Date().toISOString());
+  res.set("X-Server-Status", "online");
+  res.status(200).end();
 });
 
 // Add a simplified version of the bulk import endpoint

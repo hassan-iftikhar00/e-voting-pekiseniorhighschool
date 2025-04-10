@@ -1,0 +1,29 @@
+services:
+  # Backend web service
+  - type: web
+    name: evoting-api
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm run start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: MONGODB_URI
+        sync: false # You'll set this in Render dashboard
+      - key: JWT_SECRET
+        sync: false # You'll set this in Render dashboard
+      - key: ALLOWED_ORIGIN
+        value: https://evoting-frontend.onrender.com
+
+  # Frontend static site
+  - type: static
+    name: evoting-frontend
+    plan: free
+    buildCommand: npm run render-build
+    publishDir: dist
+    envVars:
+      - key: VITE_API_URL
+        value: https://evoting-api.onrender.com
