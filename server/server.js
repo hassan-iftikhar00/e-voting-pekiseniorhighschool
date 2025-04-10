@@ -126,8 +126,33 @@ app.use((err, req, res, next) => {
   });
 });
 
-// API Routes
+// API Routes - These must come BEFORE the SPA handling
 app.use("/api", apiRoutes);
+
+// Server info endpoint - Add a standalone endpoint for health checks
+app.get("/server-info", (req, res) => {
+  res.set("Access-Control-Allow-Origin", "*");
+  res.set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+  res.set("Access-Control-Max-Age", "600");
+  res.json({
+    status: "online",
+    port: process.env.PORT || 5000,
+    timestamp: Date.now(),
+    serverTime: new Date().toISOString(),
+    version: process.env.npm_package_version || "1.0.0",
+  });
+});
+
+// Health check - Keep this outside of API routes for better monitoring
+app.get("/health", (req, res) => {
+  res.status(200).json({
+    status: "ok",
+    timestamp: Date.now(),
+    uptime: process.uptime(),
+    mongodb:
+      mongoose.connection.readyState === 1 ? "connected" : "disconnected",
+  });
+});
 
 // Serve static files and handle SPA routing in production
 if (process.env.NODE_ENV === "production") {
@@ -154,8 +179,19 @@ if (process.env.NODE_ENV === "production") {
     // Serve static files
     app.use(express.static(staticPath));
 
-    // Handle SPA routing
-    app.get("*", (req, res) => {
+    // Handle SPA routing - IMPORTANT: This needs to come AFTER API routes
+    // This handler explicitly excludes /api and other backend-specific paths
+    app.get("*", (req, res, next) => {
+      // Skip API routes and other backend endpoints
+      if (
+        req.path.startsWith("/api/") ||
+        req.path === "/health" ||
+        req.path === "/server-info"
+      ) {
+        return next();
+      }
+
+      // Otherwise serve the SPA index.html
       res.sendFile(path.join(staticPath, "index.html"));
     });
   } else {
