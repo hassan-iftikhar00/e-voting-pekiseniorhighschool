@@ -156,16 +156,6 @@ const ElectionManager: React.FC = () => {
       }
 
       const data = await response.json();
-      console.log("Fetched election data:", data);
-
-      // Check critical fields for timer calculation
-      if (data.isActive) {
-        console.log("Active election details:", {
-          endDate: data.endDate,
-          date: data.date,
-          endTime: data.endTime,
-        });
-      }
 
       setCurrentElection(data);
     } catch (error) {
@@ -198,7 +188,6 @@ const ElectionManager: React.FC = () => {
         // which should be properly synchronized with the election data
         // If endDate is different from date, use endDate for proper calculation
         const dateStr = currentElection.endDate || currentElection.date;
-        console.log("Active election end date:", dateStr);
 
         const [year, month, day] = dateStr.split("-").map(Number);
         const [hours, minutes] = (currentElection.endTime || "16:00")
@@ -207,12 +196,9 @@ const ElectionManager: React.FC = () => {
 
         // Make sure to create the date correctly (month is 0-indexed in JavaScript)
         targetDate = new Date(year, month - 1, day, hours, minutes);
-        console.log("Target end date:", targetDate.toLocaleString());
-        console.log("Current date:", now.toLocaleString());
 
         // Check if the end date is in the past
         if (targetDate <= now) {
-          console.log("End date is in the past");
           setTimeRemaining("Election has ended");
           setElectionStatus("ended");
           return;
@@ -220,7 +206,6 @@ const ElectionManager: React.FC = () => {
       } else {
         // For inactive elections, calculate time until start
         const dateStr = currentElection.startDate || currentElection.date;
-        console.log("Inactive election start date:", dateStr);
 
         const [year, month, day] = dateStr.split("-").map(Number);
         const [hours, minutes] = (currentElection.startTime || "08:00")
@@ -228,7 +213,6 @@ const ElectionManager: React.FC = () => {
           .map(Number);
 
         targetDate = new Date(year, month - 1, day, hours, minutes);
-        console.log("Target start date:", targetDate.toLocaleString());
 
         if (targetDate <= now) {
           setTimeRemaining("Election start time has passed");
@@ -238,7 +222,6 @@ const ElectionManager: React.FC = () => {
 
       // Calculate time difference
       const difference = targetDate.getTime() - now.getTime();
-      console.log("Time difference in ms:", difference);
 
       if (difference <= 0) {
         if (currentElection.isActive) {

@@ -299,27 +299,19 @@ const ActivityLogManager: React.FC = () => {
     user: ActivityLog["user"],
     log?: ActivityLog
   ): string => {
-    console.log("Getting display name for user:", user); // Debug log
-
     // First priority: check if this is a login action and extract username from details
     if (log?.action === "user:login" && log?.details) {
       try {
-        console.log("Login action detected, details:", log.details);
         let loginDetails = log.details;
 
         // Handle string details (needs to be parsed)
         if (typeof loginDetails === "string") {
           try {
             loginDetails = JSON.parse(loginDetails);
-            console.log("Parsed string details:", loginDetails);
           } catch (err) {
             // If not valid JSON, check if it contains username information directly
             const usernameMatch = loginDetails.match(/username["\s:]+([^"]+)/i);
             if (usernameMatch && usernameMatch[1]) {
-              console.log(
-                "Extracted username from string via regex:",
-                usernameMatch[1]
-              );
               return usernameMatch[1].trim();
             }
           }
@@ -328,10 +320,6 @@ const ActivityLogManager: React.FC = () => {
         // Now loginDetails should be an object
         if (loginDetails && typeof loginDetails === "object") {
           if (loginDetails.username) {
-            console.log(
-              "Found username in login details object:",
-              loginDetails.username
-            );
             return loginDetails.username;
           }
         }
@@ -348,25 +336,20 @@ const ActivityLogManager: React.FC = () => {
 
     // Direct access for string users
     if (typeof user === "string") {
-      console.log("User is a direct string value:", user);
       return user;
     }
 
     // Direct access from user object properties
     if (user.username) {
-      console.log("Found username property in user object:", user.username);
       return user.username;
     }
 
     if (user.fullName) {
-      console.log("Found fullName property in user object:", user.fullName);
       return user.fullName;
     }
 
     // Special handling for login logs using user ID
     if (user._id && logs.length > 0) {
-      console.log("Searching for username by user ID:", user._id);
-
       // Look for any login log with this user ID that has username in details
       const loginLog = logs.find(
         (log) =>
@@ -377,7 +360,6 @@ const ActivityLogManager: React.FC = () => {
       );
 
       if (loginLog) {
-        console.log("Found matching login log:", loginLog);
         try {
           // Extract username from the matching log details
           let loginDetails = loginLog.details;

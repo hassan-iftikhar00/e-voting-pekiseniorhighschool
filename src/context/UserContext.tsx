@@ -217,7 +217,6 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({
     try {
       setLoading(true);
       setError("");
-      console.log("Attempting login for:", username);
 
       // Get API base URL
       const API_BASE_URL =

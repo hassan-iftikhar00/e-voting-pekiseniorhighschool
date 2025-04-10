@@ -22,7 +22,6 @@ const Login: React.FC = () => {
 
       if (result.success) {
         // Only navigate on successful login
-        console.log("Login successful, navigating to dashboard");
 
         // Delay navigation slightly to ensure state updates complete
         setTimeout(() => {
