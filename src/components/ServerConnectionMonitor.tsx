@@ -174,8 +174,8 @@ const ServerConnectionMonitor: React.FC<ServerConnectionMonitorProps> = ({
             <div className="flex items-start mb-2">
               <WifiOff className="h-5 w-5 text-red-500 mt-0.5 mr-2" />
               <p className="text-gray-700">
-                <span className="font-medium">Network issues</span> - Check your
-                internet connection
+                <span className="font-medium">Network issues</span> -Try to
+                realod the page and Check your internet connection
               </p>
             </div>
             <div className="flex items-start mb-2">

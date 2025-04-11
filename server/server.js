@@ -15,6 +15,23 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// Simple in-memory cache for critical data
+const cache = {
+  electionStatus: null,
+  electionStatusTime: null,
+  settings: null,
+  settingsTime: null,
+};
+
+// Cache duration in ms (5 minutes)
+const CACHE_DURATION = 5 * 60 * 1000;
+
+// Middleware to attach cache to request object
+app.use((req, res, next) => {
+  req.cache = cache;
+  next();
+});
+
 // CORS middleware with proper configuration for Render.com
 app.use(
   cors({
@@ -51,6 +68,69 @@ app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 // Basic routes
 app.get("/", (req, res) => {
   res.send("Server is running");
+});
+
+// Quick election status endpoint (with caching)
+app.get("/api/election-status-quick", async (req, res) => {
+  try {
+    const now = Date.now();
+
+    // Check if we have a cached valid election status
+    if (
+      cache.electionStatus &&
+      now - cache.electionStatusTime < CACHE_DURATION
+    ) {
+      console.log("Serving election status from cache");
+      return res.json(cache.electionStatus);
+    }
+
+    // If no cache, fetch from database
+    const Election = mongoose.model("Election");
+    const Setting = mongoose.model("Setting");
+
+    // Use faster query with lean() to get only what we need
+    const election = await Election.findOne({ isCurrent: true })
+      .select(
+        "title date startDate endDate startTime endTime isActive resultsPublished"
+      )
+      .lean();
+
+    if (!election) {
+      return res.status(404).json({ message: "No active election found" });
+    }
+
+    // Fetch settings only if we need to
+    const settings = await Setting.findOne()
+      .select("votingStartDate votingEndDate votingStartTime votingEndTime")
+      .lean();
+
+    // Merge data and fill in gaps
+    const response = {
+      ...election,
+      startDate:
+        election.startDate ||
+        (settings ? settings.votingStartDate : election.date),
+      endDate:
+        election.endDate || (settings ? settings.votingEndDate : election.date),
+      startTime:
+        election.startTime ||
+        (settings ? settings.votingStartTime + ":00" : "08:00:00"),
+      endTime:
+        election.endTime ||
+        (settings ? settings.votingEndTime + ":00" : "16:00:00"),
+    };
+
+    // Cache the result
+    cache.electionStatus = response;
+    cache.electionStatusTime = now;
+
+    return res.json(response);
+  } catch (error) {
+    console.error("Error in quick election status:", error);
+    return res
+      .status(500)
+      .json({ message: "Server error", error: error.message });
+  }
 });
 
 // API Routes - Mount apiRoutes to /api
@@ -209,7 +289,7 @@ if (process.env.NODE_ENV === "production") {
   }
 }
 
-// MongoDB connection with improved error handling
+// MongoDB connection with improved error handling and optimized settings
 console.log("Connecting to MongoDB at:", process.env.MONGODB_URI);
 mongoose
   .connect(
@@ -219,6 +299,12 @@ mongoose
       serverSelectionTimeoutMS: 30000,
       connectTimeoutMS: 10000,
       socketTimeoutMS: 45000,
+      // Add performance optimizations
+      maxPoolSize: 10,
+      minPoolSize: 2,
+      maxIdleTimeMS: 30000,
+      // Add read preference to prefer reading from secondaries if available
+      readPreference: "primaryPreferred",
     }
   )
   .then(() => {
