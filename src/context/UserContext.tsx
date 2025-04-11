@@ -245,7 +245,7 @@ export const UserProvider: React.FC<{ children: ReactNode }> = ({
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ username, password }),
-        signal: AbortSignal.timeout(15000), // 15 second timeout
+        signal: AbortSignal.timeout(30000), // 15 second timeout
       });
 
       const data = await response.json();
