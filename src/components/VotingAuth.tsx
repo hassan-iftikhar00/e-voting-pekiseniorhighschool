@@ -641,8 +641,11 @@ const VotingAuth: React.FC = () => {
                 Voter ID
               </label>
               <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Key className="h-4 w-4 sm:h-5 sm:w-5 text-indigo-200" />
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none z-20">
+                  <Key
+                    className="h-4 w-4 sm:h-5 sm:w-5 text-indigo-200 relative"
+                    style={{ textShadow: "0 0 10px rgba(255,255,255,0.5)" }}
+                  />
                 </div>
                 <input
                   id="voting-id"
