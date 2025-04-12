@@ -642,7 +642,7 @@ const VotingAuth: React.FC = () => {
               </label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Key className="h-4 w-4 sm:h-5 sm:w-5 text-indigo-300" />
+                  <Key className="h-4 w-4 sm:h-5 sm:w-5 text-indigo-200" />
                 </div>
                 <input
                   id="voting-id"
