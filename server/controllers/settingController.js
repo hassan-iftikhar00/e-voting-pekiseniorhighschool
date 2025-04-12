@@ -1,35 +1,29 @@
 import Setting from "../models/Setting.js";
 import Election from "../models/Election.js";
 
-// Cache for settings to reduce database queries
+// Improved cache mechanism with timeout protection
 let settingsCache = null;
 let settingsCacheTime = null;
-const CACHE_DURATION = 300000; // 5 minutes in milliseconds
+const CACHE_MAX_AGE = 10 * 60 * 1000; // 10 minutes
+const QUERY_TIMEOUT = 10000; // 10 seconds
 
-// Get all settings
+// Get settings with timeout and fallback
 export const getSettings = async (req, res) => {
-  try {
-    // Add performance metrics
-    const startTime = Date.now();
-    console.log(
-      `[PERF][SERVER] Settings request received at ${new Date().toISOString()}`
-    );
+  const startTime = Date.now();
+  console.log(
+    `[PERF][SERVER] Settings request received at ${new Date().toISOString()}`
+  );
 
-    // Check if we have valid cached settings
-    const now = Date.now();
-    if (
-      settingsCache &&
-      settingsCacheTime &&
-      now - settingsCacheTime < CACHE_DURATION
-    ) {
+  try {
+    // Check for valid cache
+    if (settingsCache && Date.now() - settingsCacheTime < CACHE_MAX_AGE) {
       console.log(
-        `[PERF][SERVER] Returning cached settings (age: ${
-          (now - settingsCacheTime) / 1000
-        }s)`
+        `[PERF][SERVER] Returning cached settings from ${new Date(
+          settingsCacheTime
+        ).toISOString()}`
       );
 
-      // Set appropriate caching headers to help client-side caching
-      res.set("Cache-Control", `private, max-age=${CACHE_DURATION / 1000}`);
+      // Add ETag for caching
       res.set("ETag", `"${settingsCacheTime}"`);
 
       // Check if client has the latest version
@@ -46,28 +40,83 @@ export const getSettings = async (req, res) => {
       return res.json(settingsCache);
     }
 
-    // If we need to fetch from database
-    console.log("[PERF][SERVER] Fetching settings from database");
+    // If we need to fetch from database, use a timeout
+    console.log(
+      "[PERF][SERVER] Fetching settings from database with timeout protection"
+    );
     const dbFetchStart = Date.now();
 
-    // Find settings document or create one if it doesn't exist
-    let settings = await Setting.findOne().lean().exec();
+    // Create a promise that will reject after timeout
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => {
+        reject(new Error("Database query timed out"));
+      }, QUERY_TIMEOUT);
+    });
+
+    // Create the actual database query
+    const queryPromise = Setting.findOne().lean().exec();
+
+    // Race the query against the timeout
+    let settings;
+    try {
+      settings = await Promise.race([queryPromise, timeoutPromise]);
+    } catch (timeoutError) {
+      console.warn(
+        "[PERF][SERVER] Settings query timed out, using default values"
+      );
+
+      // Check if we have a previous cache we can use
+      if (settingsCache) {
+        console.log(
+          "[PERF][SERVER] Using previous cached settings as fallback"
+        );
+        res.set("X-Settings-Source", "cached-fallback");
+        return res.json(settingsCache);
+      }
+
+      // Create default settings if no cache available
+      settings = createDefaultSettings();
+      res.set("X-Settings-Source", "default-fallback");
+    }
+
     console.log(
       `[PERF][SERVER] Settings DB fetch took: ${Date.now() - dbFetchStart}ms`
     );
 
     if (!settings) {
       console.log("[PERF][SERVER] Creating new settings document");
-      const newSettings = new Setting();
-      await newSettings.save();
-      settings = newSettings.toObject();
+      const newSettings = createDefaultSettings();
+
+      // Try to save in background but don't wait for it
+      Setting.create(newSettings).catch((err) =>
+        console.error("Error saving default settings:", err)
+      );
+
+      settings = newSettings;
     }
+
+    // Update cache
+    settingsCache = settings;
+    settingsCacheTime = Date.now();
 
     // Get current election data to supplement settings
     const electionFetchStart = Date.now();
-    const currentElection = await Election.findOne({ isCurrent: true })
-      .lean()
-      .exec();
+    let currentElection;
+
+    try {
+      currentElection = await Promise.race([
+        Election.findOne({ isCurrent: true }).lean().exec(),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("Election query timeout")), 5000)
+        ),
+      ]);
+    } catch (electionError) {
+      console.warn(
+        "[PERF][SERVER] Election fetch timed out, using cached values if available"
+      );
+      // Proceed without election data
+    }
+
     console.log(
       `[PERF][SERVER] Election DB fetch took: ${
         Date.now() - electionFetchStart
@@ -89,25 +138,56 @@ export const getSettings = async (req, res) => {
       settings.isActive = currentElection.isActive;
     }
 
-    // Update the cache with better efficiency
-    settingsCache = settings;
-    settingsCacheTime = now;
-
-    // Set response headers for better client caching
-    res.set("Cache-Control", `private, max-age=${CACHE_DURATION / 1000}`);
-    res.set("ETag", `"${settingsCacheTime}"`);
-
     console.log(
       `[PERF][SERVER] Total settings processing time: ${
         Date.now() - startTime
       }ms`
     );
-    res.json(settingsCache);
+    res.set("X-Settings-Source", "database");
+    res.set("ETag", `"${settingsCacheTime}"`);
+    return res.json(settings);
   } catch (error) {
-    console.error("[PERF][SERVER] Error fetching settings:", error);
-    res.status(500).json({ message: "Server error", error: error.message });
+    console.error("Error retrieving settings:", error);
+
+    // If we have cached settings, return those even on error
+    if (settingsCache) {
+      console.log(
+        "[PERF][SERVER] Error fetching settings, using cached version"
+      );
+      res.set("X-Settings-Source", "error-fallback");
+      return res.json(settingsCache);
+    }
+
+    // Last resort - create default settings
+    const defaultSettings = createDefaultSettings();
+    res.set("X-Settings-Source", "error-default");
+    return res.status(200).json(defaultSettings);
   }
 };
+
+// Helper function to create default settings
+function createDefaultSettings() {
+  return {
+    isActive: true,
+    electionTitle: "Student Council Election",
+    votingStartDate: new Date().toISOString().split("T")[0],
+    votingEndDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+      .toISOString()
+      .split("T")[0],
+    votingStartTime: "08:00",
+    votingEndTime: "17:00",
+    resultsPublished: false,
+    allowVoterRegistration: false,
+    requireEmailVerification: false,
+    maxVotesPerVoter: 1,
+    systemName: "Peki Senior High School Elections",
+    systemLogo: "",
+    companyName: "",
+    companyLogo: "",
+    schoolName: "Peki Senior High School",
+    schoolLogo: "",
+  };
+}
 
 // Update settings
 export const updateSettings = async (req, res) => {

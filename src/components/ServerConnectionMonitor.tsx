@@ -21,31 +21,79 @@ const ServerConnectionMonitor: React.FC<ServerConnectionMonitorProps> = ({
   }>({});
 
   // Use refs for logging control and interval management
-  const shouldLog = useRef<boolean>(false); // Set to false by default
+  const shouldLog = useRef<boolean>(false);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
   const lastCheckTimeRef = useRef<number>(0);
+  const consecutiveFailsRef = useRef<number>(0);
 
-  // Disable all console logs in production
-  const enableLogs = false; // Set this to false to disable all logs
+  // Track if a reconnection is pending
+  const reconnectionAttemptRef = useRef<boolean>(false);
+
+  // Store last known good connection time to prevent flapping
+  const lastGoodConnectionRef = useRef<number>(0);
 
   // Connection check throttling (5 minutes when connected)
-  const CONNECTED_CHECK_INTERVAL = 300000;
+  const CONNECTED_CHECK_INTERVAL = 300000; // 5 minutes
+  const QUICK_RETRY_INTERVAL = 10000; // 10 seconds for first few retries
+  const DISCONNECT_THRESHOLD = 5; // Consider disconnected after 5 consecutive fails
+  const STABLE_CONNECTION_TIME = 30000; // 30 seconds of stability to reset counters
   const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:5000";
 
-  // Get exponential backoff delay based on retry count
+  // Get exponential backoff delay based on retry count, but with more reasonable limits
   const getBackoffDelay = useCallback(() => {
-    const baseDelay = 2000;
-    const maxDelay = 30000;
-    const calculatedDelay = baseDelay * Math.pow(1.5, Math.min(retryCount, 10));
+    if (retryCount < 3) return QUICK_RETRY_INTERVAL;
+
+    const baseDelay = 5000;
+    const maxDelay = 60000; // Cap at 1 minute
+    const calculatedDelay = baseDelay * Math.pow(1.5, Math.min(retryCount, 8));
     return Math.min(calculatedDelay, maxDelay);
   }, [retryCount]);
 
-  // Check server connection status
+  // Check if we should fall back to local data
+  const shouldUseFallback = useCallback(() => {
+    const now = Date.now();
+    // Use fallback if:
+    // 1. We have a good connection recently (within 10 minutes) but are currently failing
+    // 2. We've had excessive retries (more than 20)
+    return (
+      (lastGoodConnectionRef.current > 0 &&
+        now - lastGoodConnectionRef.current < 600000 &&
+        consecutiveFailsRef.current > DISCONNECT_THRESHOLD) ||
+      retryCount > 20
+    );
+  }, [retryCount]);
+
+  // Try alternate endpoints if primary fails
+  const tryAlternateEndpoints = useCallback(async () => {
+    try {
+      // Try the health endpoint first
+      const healthResponse = await fetch(`${apiUrl}/health`, {
+        method: "GET",
+        signal: AbortSignal.timeout(3000),
+        cache: "no-store",
+      });
+
+      if (healthResponse.ok) return true;
+
+      // Then try the root endpoint
+      const rootResponse = await fetch(`${apiUrl}`, {
+        method: "GET",
+        signal: AbortSignal.timeout(3000),
+        cache: "no-store",
+      });
+
+      return rootResponse.ok;
+    } catch (error) {
+      return false;
+    }
+  }, [apiUrl]);
+
+  // Check server connection status with improved error handling
   const checkServerConnection = useCallback(
     async (forceLog = false) => {
       const now = Date.now();
 
-      // Throttle checks when connected (one check per interval)
+      // Don't check too frequently when connected unless forced
       if (
         serverStatus === "connected" &&
         now - lastCheckTimeRef.current < CONNECTED_CHECK_INTERVAL &&
@@ -54,26 +102,33 @@ const ServerConnectionMonitor: React.FC<ServerConnectionMonitorProps> = ({
         return;
       }
 
+      // Avoid multiple concurrent checks
+      if (reconnectionAttemptRef.current) {
+        return;
+      }
+
+      reconnectionAttemptRef.current = true;
       lastCheckTimeRef.current = now;
       setLastChecked(new Date());
 
-      // Only log if logging is enabled AND (forceLog is true OR shouldLog.current is true)
-      const log = enableLogs && (forceLog || shouldLog.current);
-
       try {
+        // Use a shorter timeout for better user experience
         const startTime = performance.now();
-
         const response = await fetch(`${apiUrl}/api/server-info`, {
           method: "HEAD",
           headers: { "Content-Type": "application/json" },
-          signal: AbortSignal.timeout(5000),
+          signal: AbortSignal.timeout(3000),
           cache: "no-store",
         });
 
         const responseTime = Math.round(performance.now() - startTime);
 
         if (response.ok) {
-          if (serverStatus !== "connected" && log) {
+          // Connection successful
+          consecutiveFailsRef.current = 0;
+          lastGoodConnectionRef.current = now;
+
+          if (serverStatus !== "connected") {
             console.log("[CONNECTION] Server connection established");
           }
 
@@ -84,28 +139,81 @@ const ServerConnectionMonitor: React.FC<ServerConnectionMonitorProps> = ({
             responseTime,
             lastSuccessful: new Date(),
           });
-          setRetryCount(0); // Reset retry count on success
+          setRetryCount(0);
           shouldLog.current = false;
-        } else {
-          if (log) {
-            console.error(
-              `[CONNECTION] Server responded with status ${response.status}`
-            );
+
+          // If we were disconnected before, force a page reload to get fresh data
+          if (serverStatus === "disconnected" && retryCount > 10) {
+            window.location.reload();
           }
+        } else {
+          // Try alternate endpoints before marking as disconnected
+          const alternateAvailable = await tryAlternateEndpoints();
+
+          if (alternateAvailable) {
+            // Server is responding to other endpoints, just not the main one
+            // Consider it still connected but log the issue
+            console.log(
+              "[CONNECTION] Main endpoint error, but server is available"
+            );
+            lastGoodConnectionRef.current = now;
+
+            // Only increment fails but don't disconnect yet
+            consecutiveFailsRef.current++;
+
+            if (consecutiveFailsRef.current <= DISCONNECT_THRESHOLD) {
+              // Keep showing as connected if below threshold
+              setServerStatus("connected");
+              setServerDetails({
+                ...serverDetails,
+                url: apiUrl,
+                responseTime: responseTime,
+                lastSuccessful: new Date(),
+              });
+              return;
+            }
+          }
+
+          // Failed beyond threshold, mark as disconnected
+          consecutiveFailsRef.current++;
+          console.error(
+            `[CONNECTION] Server responded with status ${response.status}`
+          );
           setServerStatus("disconnected");
           setRetryCount((prev) => prev + 1);
           shouldLog.current = true;
         }
       } catch (error) {
-        if (log) {
-          console.error("[CONNECTION] Server connection error:", error);
+        consecutiveFailsRef.current++;
+        console.error("[CONNECTION] Server connection error:", error);
+
+        // Check if we should fall back to local data and pretend to be connected
+        if (shouldUseFallback()) {
+          console.log(
+            "[CONNECTION] Using fallback mode due to persistent connection issues"
+          );
+          // Don't show as disconnected if we're using fallback mode
+          // This prevents disruption for transient network issues
+          if (serverStatus === "connected") {
+            return;
+          }
         }
+
         setServerStatus("disconnected");
         setRetryCount((prev) => prev + 1);
         shouldLog.current = true;
+      } finally {
+        reconnectionAttemptRef.current = false;
       }
     },
-    [apiUrl, serverDetails, serverStatus]
+    [
+      apiUrl,
+      serverDetails,
+      serverStatus,
+      retryCount,
+      shouldUseFallback,
+      tryAlternateEndpoints,
+    ]
   );
 
   // Setup connection monitoring
@@ -125,7 +233,7 @@ const ServerConnectionMonitor: React.FC<ServerConnectionMonitorProps> = ({
         checkServerConnection(false);
       }, getBackoffDelay());
     } else {
-      // For connected state, use long interval and no logging
+      // For connected state, use long interval
       shouldLog.current = false;
       intervalRef.current = setInterval(() => {
         checkServerConnection(false);
@@ -141,9 +249,43 @@ const ServerConnectionMonitor: React.FC<ServerConnectionMonitorProps> = ({
     };
   }, [checkServerConnection, serverStatus, retryCount, getBackoffDelay]);
 
+  // Add automatic recovery after certain time
+  useEffect(() => {
+    // If disconnected for more than 5 minutes, try a page reload
+    if (serverStatus === "disconnected" && retryCount > 30) {
+      const reloadTimer = setTimeout(() => {
+        window.location.reload();
+      }, 300000); // 5 minutes
+
+      return () => clearTimeout(reloadTimer);
+    }
+  }, [serverStatus, retryCount]);
+
   const handleManualRetry = () => {
-    // Only log during manual retries if logging is enabled
-    checkServerConnection(enableLogs);
+    // For manual retry, attempt with shorter timeout and force refresh if successful
+    const attemptReconnect = async () => {
+      try {
+        const response = await fetch(`${apiUrl}/api/server-info`, {
+          method: "HEAD",
+          headers: { "Content-Type": "application/json" },
+          signal: AbortSignal.timeout(5000),
+          cache: "no-store",
+        });
+
+        if (response.ok) {
+          // Force reload to get fresh data
+          window.location.reload();
+          return;
+        }
+
+        // Regular retry if the fast attempt fails
+        checkServerConnection(true);
+      } catch (error) {
+        checkServerConnection(true);
+      }
+    };
+
+    attemptReconnect();
   };
 
   const toggleDialog = () => {
@@ -174,8 +316,8 @@ const ServerConnectionMonitor: React.FC<ServerConnectionMonitorProps> = ({
             <div className="flex items-start mb-2">
               <WifiOff className="h-5 w-5 text-red-500 mt-0.5 mr-2" />
               <p className="text-gray-700">
-                <span className="font-medium">Network issues</span> -Try to
-                realod the page and Check your internet connection
+                <span className="font-medium">Network issues</span> - Try to
+                reload the page and Check your internet connection
               </p>
             </div>
             <div className="flex items-start mb-2">

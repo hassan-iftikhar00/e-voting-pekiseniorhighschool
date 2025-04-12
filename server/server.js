@@ -84,25 +84,69 @@ app.get("/api/election-status-quick", async (req, res) => {
       return res.json(cache.electionStatus);
     }
 
-    // If no cache, fetch from database
+    // If no cache, fetch from database with timeout protection
     const Election = mongoose.model("Election");
     const Setting = mongoose.model("Setting");
 
+    // Create timeout promise
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(
+        () => reject(new Error("Election status query timed out")),
+        5000
+      );
+    });
+
     // Use faster query with lean() to get only what we need
-    const election = await Election.findOne({ isCurrent: true })
+    const electionQuery = Election.findOne({ isCurrent: true })
       .select(
         "title date startDate endDate startTime endTime isActive resultsPublished"
       )
       .lean();
 
+    // Race against timeout
+    let election;
+    try {
+      election = await Promise.race([electionQuery, timeoutPromise]);
+    } catch (timeoutError) {
+      console.warn("Election query timed out, using cached data if available");
+
+      // If we have cached data, use it
+      if (cache.electionStatus) {
+        return res.json(cache.electionStatus);
+      }
+
+      // Create a minimal fallback
+      return res.json({
+        title: "Election",
+        date: new Date().toISOString().split("T")[0],
+        isActive: true,
+        startTime: "08:00:00",
+        endTime: "16:00:00",
+      });
+    }
+
     if (!election) {
       return res.status(404).json({ message: "No active election found" });
     }
 
-    // Fetch settings only if we need to
-    const settings = await Setting.findOne()
-      .select("votingStartDate votingEndDate votingStartTime votingEndTime")
-      .lean();
+    // Fetch settings only if we need to - with timeout
+    let settings = null;
+    try {
+      const settingsQuery = Setting.findOne()
+        .select("votingStartDate votingEndDate votingStartTime votingEndTime")
+        .lean();
+
+      settings = await Promise.race([
+        settingsQuery,
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("Settings query timeout")), 3000)
+        ),
+      ]);
+    } catch (settingsError) {
+      console.warn(
+        "Settings query for election status timed out, proceeding with election data only"
+      );
+    }
 
     // Merge data and fill in gaps
     const response = {
@@ -124,9 +168,22 @@ app.get("/api/election-status-quick", async (req, res) => {
     cache.electionStatus = response;
     cache.electionStatusTime = now;
 
+    console.log("Sending election status with:", {
+      startDate: response.startDate,
+      endDate: response.endDate,
+      date: response.date,
+      isActive: response.isActive,
+    });
+
     return res.json(response);
   } catch (error) {
     console.error("Error in quick election status:", error);
+
+    // If we have a cache, use it even on error
+    if (cache.electionStatus) {
+      return res.json(cache.electionStatus);
+    }
+
     return res
       .status(500)
       .json({ message: "Server error", error: error.message });
@@ -175,13 +232,56 @@ app.get("/server-info", (req, res) => {
   });
 });
 
+// Enhanced health check endpoint
 app.get("/health", (req, res) => {
+  // Get MongoDB connection state text
+  const mongoStates = [
+    "disconnected",
+    "connected",
+    "connecting",
+    "disconnecting",
+    "uninitialized",
+  ];
+
+  const mongoReadyState = mongoose.connection.readyState;
+  const mongoStatus = mongoStates[mongoReadyState] || "unknown";
+
+  // Check if we have a recent successful query
+  const dbHealthy = mongoReadyState === 1;
+
+  // Get memory usage
+  const memoryUsage = process.memoryUsage();
+
+  // Get cache status
+  const cacheStatus = {
+    electionStatus: !!cache.electionStatus,
+    electionStatusTime: cache.electionStatusTime
+      ? new Date(cache.electionStatusTime).toISOString()
+      : null,
+    settings: !!cache.settings,
+    settingsTime: cache.settingsTime
+      ? new Date(cache.settingsTime).toISOString()
+      : null,
+  };
+
   res.status(200).json({
-    status: "ok",
+    status: dbHealthy ? "ok" : "degraded",
     timestamp: Date.now(),
     uptime: process.uptime(),
-    mongodb:
-      mongoose.connection.readyState === 1 ? "connected" : "disconnected",
+    mongodb: {
+      status: mongoStatus,
+      connected: dbHealthy,
+      connectionTime: mongoose.connection.openTime
+        ? new Date(mongoose.connection.openTime).toISOString()
+        : null,
+    },
+    memory: {
+      rss: Math.round(memoryUsage.rss / 1024 / 1024) + "MB",
+      heapTotal: Math.round(memoryUsage.heapTotal / 1024 / 1024) + "MB",
+      heapUsed: Math.round(memoryUsage.heapUsed / 1024 / 1024) + "MB",
+    },
+    cache: cacheStatus,
+    version: process.env.npm_package_version || "1.0.0",
   });
 });
 
@@ -212,18 +312,6 @@ app.use("/api/voters/bulk", (req, res, next) => {
     } catch (error) {
       console.error("Error parsing/logging request body:", error);
     }
-  }
-
-  console.log("============================");
-  next();
-});
-
-// Performance middleware
-app.use((req, res, next) => {
-  res.set("X-Response-Time", `${Date.now()}`);
-
-  if (req.path.startsWith("/api/") && !req.path.includes("/static/")) {
-    res.set("Cache-Control", "no-cache, no-store");
   }
 
   next();
@@ -289,6 +377,27 @@ if (process.env.NODE_ENV === "production") {
   }
 }
 
+// Add MongoDB query debugging in development
+if (process.env.NODE_ENV !== "production") {
+  const SLOW_QUERY_THRESHOLD_MS = 1000; // 1 second
+
+  mongoose.set("debug", (collectionName, methodName, ...methodArgs) => {
+    const startTime = Date.now();
+
+    // Return a custom function for the callback
+    return () => {
+      const endTime = Date.now();
+      const elapsedTime = endTime - startTime;
+
+      if (elapsedTime > SLOW_QUERY_THRESHOLD_MS) {
+        console.warn(
+          `[SLOW QUERY] ${collectionName}.${methodName} took ${elapsedTime}ms`
+        );
+      }
+    };
+  });
+}
+
 // MongoDB connection with improved error handling and optimized settings
 console.log("Connecting to MongoDB at:", process.env.MONGODB_URI);
 mongoose
@@ -297,14 +406,18 @@ mongoose
     {
       retryWrites: true,
       serverSelectionTimeoutMS: 30000,
-      connectTimeoutMS: 10000,
+      connectTimeoutMS: 15000,
       socketTimeoutMS: 45000,
       // Add performance optimizations
-      maxPoolSize: 10,
-      minPoolSize: 2,
-      maxIdleTimeMS: 30000,
+      maxPoolSize: 20,
+      minPoolSize: 5,
+      maxIdleTimeMS: 60000,
       // Add read preference to prefer reading from secondaries if available
       readPreference: "primaryPreferred",
+      // Add connection pool monitoring
+      heartbeatFrequencyMS: 30000,
+      // Enable driver level retries for reads
+      retryReads: true,
     }
   )
   .then(() => {
@@ -315,8 +428,27 @@ mongoose
     console.error("MongoDB connection error:", err);
     if (process.env.NODE_ENV !== "production") {
       process.exit(1);
+    } else {
+      // In production, try to start server anyway
+      console.log(
+        "Attempting to start server despite MongoDB connection issues"
+      );
+      startServer();
     }
   });
+
+// Add connection event listeners for better monitoring
+mongoose.connection.on("error", (err) => {
+  console.error("MongoDB connection error:", err);
+});
+
+mongoose.connection.on("disconnected", () => {
+  console.log("MongoDB disconnected, attempting to reconnect...");
+});
+
+mongoose.connection.on("reconnected", () => {
+  console.log("MongoDB reconnected successfully");
+});
 
 // Server startup function
 const startServer = () => {
