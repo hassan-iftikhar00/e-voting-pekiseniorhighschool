@@ -177,14 +177,45 @@ const VotingAuth: React.FC = () => {
       if (currentElection.isActive) {
         const dateStr = currentElection.endDate || currentElection.date;
 
-        // Only log in debug mode
+        // Add validation check for dateStr
+        if (!dateStr) {
+          console.error("Invalid date string for end date");
+          setTimeRemaining("Date unavailable");
+          return;
+        }
 
-        const [year, month, day] = dateStr.split("-").map(Number);
-        const [hours, minutes] = (currentElection.endTime || "16:00")
+        // Only log in debug mode
+        const dateParts = dateStr.split("-").map(Number);
+        if (dateParts.length !== 3 || dateParts.some(isNaN)) {
+          console.error("Invalid date format:", dateStr);
+          setTimeRemaining("Date format error");
+          return;
+        }
+
+        const [year, month, day] = dateParts;
+
+        // Validate time parts
+        const timeParts = (currentElection.endTime || "16:00")
           .split(":")
           .map(Number);
 
+        if (timeParts.some(isNaN)) {
+          console.error("Invalid time format:", currentElection.endTime);
+          setTimeRemaining("Time format error");
+          return;
+        }
+
+        const [hours, minutes] = timeParts;
+
+        // Create date safely
         targetDate = new Date(year, month - 1, day, hours, minutes);
+
+        // Validate the created date
+        if (isNaN(targetDate.getTime())) {
+          console.error("Created an invalid date object");
+          setTimeRemaining("Date calculation error");
+          return;
+        }
 
         if (targetDate <= now) {
           if (DEBUG) console.log("End date is in the past");
@@ -195,12 +226,46 @@ const VotingAuth: React.FC = () => {
       } else {
         const dateStr = currentElection.startDate || currentElection.date;
 
-        const [year, month, day] = dateStr.split("-").map(Number);
-        const [hours, minutes] = (currentElection.startTime || "08:00")
+        // Add validation check for dateStr
+        if (!dateStr) {
+          console.error("Invalid date string for start date");
+          setTimeRemaining("Date unavailable");
+          return;
+        }
+
+        // Validate date parts
+        const dateParts = dateStr.split("-").map(Number);
+        if (dateParts.length !== 3 || dateParts.some(isNaN)) {
+          console.error("Invalid date format:", dateStr);
+          setTimeRemaining("Date format error");
+          return;
+        }
+
+        const [year, month, day] = dateParts;
+
+        // Validate time parts
+        const timeParts = (currentElection.startTime || "08:00")
           .split(":")
           .map(Number);
 
+        if (timeParts.some(isNaN)) {
+          console.error("Invalid time format:", currentElection.startTime);
+          setTimeRemaining("Time format error");
+          return;
+        }
+
+        const [hours, minutes] = timeParts;
+
+        // Create date safely
         targetDate = new Date(year, month - 1, day, hours, minutes);
+
+        // Validate the created date
+        if (isNaN(targetDate.getTime())) {
+          console.error("Created an invalid date object");
+          setTimeRemaining("Date calculation error");
+          return;
+        }
+
         if (DEBUG)
           console.log("Target start date:", targetDate.toLocaleString());
 
@@ -325,6 +390,8 @@ const VotingAuth: React.FC = () => {
 
   const formatDate = (dateInput: Date | string) => {
     try {
+      if (!dateInput) return "Date unavailable";
+
       const date = dateInput instanceof Date ? dateInput : new Date(dateInput);
 
       if (isNaN(date.getTime())) {
@@ -343,6 +410,8 @@ const VotingAuth: React.FC = () => {
 
   const formatTime = (dateInput: Date | string) => {
     try {
+      if (!dateInput) return "Time unavailable";
+
       const date = dateInput instanceof Date ? dateInput : new Date(dateInput);
 
       if (isNaN(date.getTime())) {
