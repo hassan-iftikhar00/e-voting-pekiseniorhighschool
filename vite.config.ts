@@ -11,6 +11,22 @@ export default defineConfig({
         target: process.env.VITE_API_URL || "http://localhost:5000",
         changeOrigin: true,
         secure: false,
+        rewrite: (path) => path.replace(/^\/api/, ""),
+        configure: (proxy) => {
+          proxy.on("proxyReq", (proxyReq) => {
+            proxyReq.setHeader("Connection", "keep-alive");
+          });
+          proxy.on("error", (err) => {
+            console.error("Proxy error:", err);
+          });
+        },
+        timeout: 10000, // 10 second timeout
+      },
+      // Add direct fallback for specific endpoints
+      "^/elections/status": {
+        target: process.env.VITE_API_URL || "http://localhost:5000",
+        changeOrigin: true,
+        secure: false,
       },
     },
   },

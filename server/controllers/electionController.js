@@ -4,6 +4,8 @@ import Voter from "../models/Voter.js";
 import Vote from "../models/Vote.js";
 import Candidate from "../models/Candidate.js";
 import Position from "../models/Position.js";
+import cacheManager from "../utils/cacheManager.js";
+import mongoose from "mongoose";
 
 let lastSentStatus = null;
 let lastLoggedStatus = null; // Store the last logged status
@@ -107,44 +109,47 @@ export const getElectionStats = async (req, res) => {
 
 // Get election status
 export const getElectionStatus = async (req, res) => {
+  const CACHE_KEY = "electionStatus";
+  const CACHE_TTL = 30000; // 30 seconds
+
   try {
-    const election = await Election.findOne({ isCurrent: true });
+    // 1. Try cache first
+    // const cached = cacheManager.get(CACHE_KEY);
+    // if (cached) {
+    //   console.log("[STATUS] Serving from cache");
+    //   return res.json(cached);
+    // }
+
+    // 2. Try database with timeout
+    const election = await Election.findOne({ isCurrent: true })
+      .select("title date startDate endDate isActive resultsPublished")
+      .lean()
+      .maxTimeMS(5000); // 5 second timeout
 
     if (!election) {
-      return res.status(404).json({ message: "No active election found" });
+      const fallback = {
+        isActive: false,
+        message: "No active election",
+        timestamp: new Date(),
+      };
+      cacheManager.set(CACHE_KEY, fallback, { ttl: CACHE_TTL });
+      return res.json(fallback);
     }
 
-    // Get settings to ensure we have the most up-to-date dates
-    const settings = await Setting.findOne();
+    // 3. Cache successful response
+    cacheManager.set(CACHE_KEY, election, { ttl: CACHE_TTL });
+    res.json(election);
+  } catch (error) {
+    console.error("Election status error:", error);
 
-    // Create response with election and possibly override with settings
-    const response = {
-      ...election.toObject(),
-      // For active elections, prefer settings dates if available
-      startDate:
-        election.startDate ||
-        (settings ? settings.votingStartDate : election.date),
-      endDate:
-        election.endDate || (settings ? settings.votingEndDate : election.date),
-      startTime:
-        election.startTime ||
-        (settings ? settings.votingStartTime + ":00" : "08:00:00"),
-      endTime:
-        election.endTime ||
-        (settings ? settings.votingEndTime + ":00" : "16:00:00"),
+    // 4. Fallback strategies
+    const fallback = cacheManager.get(CACHE_KEY, { allowExpired: true }) || {
+      isActive: false,
+      message: "Service unavailable",
+      timestamp: new Date(),
     };
 
-    console.log("Sending election status with:", {
-      startDate: response.startDate,
-      endDate: response.endDate,
-      date: response.date,
-      isActive: response.isActive,
-    });
-
-    res.json(response);
-  } catch (error) {
-    console.error("Error getting election status:", error);
-    res.status(500).json({ message: "Server error", error: error.message });
+    res.status(error instanceof mongoose.Error ? 503 : 500).json(fallback);
   }
 };
 

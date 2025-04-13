@@ -412,73 +412,22 @@ app.get("/server-info", (req, res) => {
 
 // Enhanced health check endpoint
 app.get("/health", (req, res) => {
-  // Try to get cached health data first
-  const cachedHealth = cacheManager.get("healthStatus", { allowExpired: true });
-  if (cachedHealth && !req.query.refresh) {
-    return res.status(200).json(cachedHealth);
-  }
+  const mongoStatus =
+    mongoose.connection.readyState === 1 ? "connected" : "disconnected";
+  const status = mongoStatus === "connected" ? "ok" : "degraded";
 
-  const mongoStates = [
-    "disconnected",
-    "connected",
-    "connecting",
-    "disconnecting",
-    "uninitialized",
-  ];
-
-  const mongoReadyState = mongoose.connection.readyState;
-  const mongoStatus = mongoStates[mongoReadyState] || "unknown";
-  const dbHealthInfo = getDbHealth();
-
-  // Update dbHealth before responding
-  dbHealth.status = mongoStatus;
-  dbHealth.lastCheck = new Date();
-
-  // Check if we have a recent successful query
-  const dbHealthy = mongoReadyState === 1;
-
-  // Get memory usage
-  const memoryUsage = process.memoryUsage();
-
-  // Get circuit breaker stats
-  const circuitBreakerStats = getAllCircuitBreakerStats();
-
-  // Get cache statistics
-  const cacheStats = cacheManager.getStats();
-
-  const healthData = {
-    status: isServerReady ? (dbHealthy ? "ok" : "degraded") : "starting",
+  res.status(status === "ok" ? 200 : 503).json({
+    status,
     timestamp: Date.now(),
     uptime: process.uptime(),
-    ready: isServerReady,
-    readyChecks: readyChecks,
-    mongodb: {
+    database: {
       status: mongoStatus,
-      connected: dbHealthy,
-      connectionTime: mongoose.connection.openTime
-        ? new Date(mongoose.connection.openTime).toISOString()
-        : null,
-      health: dbHealthInfo,
+      connectionTime:
+        mongoose.connection.readyState === 1
+          ? new Date(mongoose.connection.openTime).toISOString()
+          : null,
     },
-    memory: {
-      rss: Math.round(memoryUsage.rss / 1024 / 1024) + "MB",
-      heapTotal: Math.round(memoryUsage.heapTotal / 1024 / 1024) + "MB",
-      heapUsed: Math.round(memoryUsage.heapUsed / 1024 / 1024) + "MB",
-    },
-    cache: cacheStats,
-    circuitBreakers: circuitBreakerStats,
-    version: process.env.npm_package_version || "1.0.0",
-  };
-
-  // Cache the health data for 30 seconds
-  cacheManager.set("healthStatus", healthData, {
-    ttl: CACHE_DURATION.HEALTH,
-    source: "health-check",
   });
-
-  // Return appropriate status code
-  const statusCode = isServerReady ? 200 : 503;
-  res.status(statusCode).json(healthData);
 });
 
 // Debug middleware for bulk import
@@ -610,23 +559,18 @@ mongoose.set("autoIndex", false); // Disable automatic index building in product
 
 // MongoDB connection with improved error handling and optimized settings
 console.log("Connecting to MongoDB at:", process.env.MONGODB_URI);
+
+// Remove the problematic options and use this instead:
 const mongooseOptions = {
-  serverSelectionTimeoutMS: 30000,
+  serverSelectionTimeoutMS: 10000, // 10 seconds
   socketTimeoutMS: 45000,
   connectTimeoutMS: 30000,
   retryWrites: true,
   retryReads: true,
-  maxPoolSize: 50,
-  minPoolSize: 5,
-  maxIdleTimeMS: 60000,
-  // Remove the problematic sslValidate option
-  ssl: true,
-  tlsAllowInvalidCertificates: false,
-  // Add read preference to prefer reading from secondaries if available
-  readPreference: "primaryPreferred",
-  // Add write concern for better reliability
-  w: "majority",
-  wtimeoutMS: 30000,
+  maxPoolSize: 10,
+  minPoolSize: 2,
+  waitQueueTimeoutMS: 10000,
+  heartbeatFrequencyMS: 10000,
 };
 
 mongoose
@@ -640,64 +584,75 @@ mongoose
   })
   .catch((err) => {
     console.error("MongoDB connection error:", err);
-    // Implement graceful fallback
+    // Start server in limited mode if in development
     if (process.env.NODE_ENV !== "production") {
       console.warn("Proceeding with limited functionality in development mode");
-      startServer(); // Start server without DB connection
-    } else {
-      console.log(
-        "Attempting to start server despite MongoDB connection issues"
-      );
       startServer();
+    } else {
+      console.error("Fatal MongoDB connection error in production");
+      process.exit(1);
     }
   });
 
 // Add more robust connection event listeners
-mongoose.connection.on("error", (err) => {
-  console.error("MongoDB connection error:", err);
-  // Update dbHealth
-  dbHealth.status = "error";
+mongoose.connection.on("connected", () => {
+  console.log("MongoDB connected successfully");
+  dbHealth.status = "connected";
   dbHealth.lastCheck = new Date();
-  dbHealth.connectionIssues++;
-  readyChecks.db = false;
-
-  // Try to reconnect manually if needed
-  if (err.name === "MongoNetworkTimeoutError") {
-    console.log("Attempting to manually reconnect due to timeout...");
-    dbHealth.connectionAttempts++;
-    mongoose
-      .connect(
-        process.env.MONGODB_URI || "mongodb://localhost:27017/eVotingSystem"
-      )
-      .catch((err) => console.error("Manual reconnection failed:", err));
-  }
+  readyChecks.db = true;
+  checkServerReady();
 });
 
 mongoose.connection.on("disconnected", () => {
-  console.log("MongoDB disconnected, attempting to reconnect...");
+  console.log("MongoDB disconnected");
   dbHealth.status = "disconnected";
   dbHealth.lastCheck = new Date();
   readyChecks.db = false;
   checkServerReady();
 });
 
-mongoose.connection.on("reconnected", () => {
-  console.log("MongoDB reconnected successfully");
-  dbHealth.status = "connected";
+mongoose.connection.on("error", (err) => {
+  console.error("MongoDB connection error:", err);
+  dbHealth.status = "error";
   dbHealth.lastCheck = new Date();
-  dbHealth.lastSuccessfulQuery = new Date();
-  readyChecks.db = true;
-  checkServerReady();
+  dbHealth.connectionIssues++;
+  readyChecks.db = false;
 });
 
-mongoose.connection.on("connected", () => {
-  console.log("MongoDB connected successfully");
-  dbHealth.status = "connected";
-  dbHealth.lastCheck = new Date();
-  dbHealth.lastSuccessfulQuery = new Date();
-  readyChecks.db = true;
-  checkServerReady();
-});
+// Add monitoring for MongoDB connections
+setInterval(() => {
+  if (mongoose.connection.readyState === 1) {
+    // Only log when connected
+    try {
+      // MongoDB driver structure may vary between versions
+      const client = mongoose.connection.getClient();
+
+      // Check if we can access pool stats (structure depends on driver version)
+      if (client && client.s && client.s.pool) {
+        const pool = client.s.pool;
+        console.log(`MongoDB Pool Stats: 
+          Current: ${pool.currentSize || "N/A"}
+          Available: ${pool.availableCount || "N/A"}
+          WaitQueue: ${pool.waitQueueSize || "N/A"}`);
+      } else if (client && client.topology) {
+        // Alternative for newer MongoDB driver versions
+        const topology = client.topology;
+        console.log(`MongoDB Connection Status: 
+          Connected: ${topology.isConnected()}
+          Server Count: ${topology.s?.servers?.size || "N/A"}
+          Type: ${topology.s?.description?.type || "N/A"}`);
+      } else {
+        // Basic connection stats if pool isn't accessible
+        console.log(`MongoDB Basic Connection Stats:
+          ReadyState: ${mongoose.connection.readyState}
+          Host: ${mongoose.connection.host || "N/A"}
+          Name: ${mongoose.connection.name || "N/A"}`);
+      }
+    } catch (error) {
+      console.warn("Unable to get MongoDB connection stats:", error.message);
+    }
+  }
+}, 10000);
 
 // Initialize DB monitoring
 initDbMonitoring();

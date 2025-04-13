@@ -1,6 +1,17 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { RefreshCw, Server, WifiOff, Settings, Database } from "lucide-react";
 
+// Add this constant at the top
+const ENDPOINT_PRIORITY = [
+  "/api/health-check", // Lightweight endpoint
+  "/api/server-info", // Fallback 1
+  "/health", // Fallback 2
+  "/api/elections/status", // Last resort
+];
+
+// Add array of fallback ports to try
+const FALLBACK_PORTS = [5000, 5001, 3000, 8080];
+
 interface ServerConnectionMonitorProps {
   children: React.ReactNode;
 }
@@ -39,6 +50,32 @@ const ServerConnectionMonitor: React.FC<ServerConnectionMonitorProps> = ({
   const DISCONNECT_THRESHOLD = 5; // Consider disconnected after 5 consecutive fails
   const STABLE_CONNECTION_TIME = 30000; // 30 seconds of stability to reset counters
   const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:5000";
+
+  const [activePort, setActivePort] = useState<number | null>(null);
+  const [connectionDetails, setConnectionDetails] = useState<string>("");
+
+  // Get base URL without port
+  const getBaseUrl = useCallback(() => {
+    const url = import.meta.env.VITE_API_URL || "http://localhost:5000";
+    // Extract the protocol and hostname without port
+    const match = url.match(/^(https?:\/\/[^:\/]+)(:\d+)?(\/.*)?$/);
+    if (match) {
+      const [, baseWithoutPort, port = "", path = ""] = match;
+      return {
+        base: baseWithoutPort,
+        defaultPort: port ? parseInt(port.substring(1)) : 5000,
+        path,
+      };
+    }
+    return { base: "http://localhost", defaultPort: 5000, path: "" };
+  }, []);
+
+  // Get API URL with the active port
+  const getApiUrl = useCallback(() => {
+    const { base, defaultPort, path } = getBaseUrl();
+    const port = activePort || defaultPort;
+    return `${base}:${port}${path}`;
+  }, [activePort]);
 
   // Get exponential backoff delay based on retry count, but with more reasonable limits
   const getBackoffDelay = useCallback(() => {
@@ -105,6 +142,59 @@ const ServerConnectionMonitor: React.FC<ServerConnectionMonitorProps> = ({
     }
   };
 
+  // Try to connect using a specific port
+  const tryConnect = useCallback(
+    async (port: number): Promise<boolean> => {
+      try {
+        const baseUrl = getBaseUrl().base;
+        const testUrl = `${baseUrl}:${port}/api/health-check`;
+
+        console.log(`[CONNECTION] Trying port ${port} at ${testUrl}`);
+
+        const response = await fetch(testUrl, {
+          signal: AbortSignal.timeout(2000),
+          cache: "no-store",
+        });
+
+        if (response.ok) {
+          console.log(`[CONNECTION] Successfully connected on port ${port}`);
+          setActivePort(port);
+          setConnectionDetails(`Connected to server on port ${port}`);
+          return true;
+        }
+        return false;
+      } catch (error: any) {
+        console.warn(
+          `[CONNECTION] Failed to connect on port ${port}:`,
+          error.message
+        );
+        return false;
+      }
+    },
+    [getBaseUrl]
+  );
+
+  // Discover available port
+  const discoverPort = useCallback(async (): Promise<boolean> => {
+    const { defaultPort } = getBaseUrl();
+
+    // Always try the default port first
+    if (await tryConnect(defaultPort)) {
+      return true;
+    }
+
+    // Then try fallback ports
+    for (const port of FALLBACK_PORTS) {
+      if (port !== defaultPort) {
+        if (await tryConnect(port)) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }, [getBaseUrl, tryConnect]);
+
   // Check server connection status with improved error handling
   const checkServerConnection = useCallback(
     async (forceLog = false) => {
@@ -128,101 +218,96 @@ const ServerConnectionMonitor: React.FC<ServerConnectionMonitorProps> = ({
       lastCheckTimeRef.current = now;
       setLastChecked(new Date());
 
-      try {
-        // Try the newer health check endpoint first with retries
-        const checkHealth = async () => {
-          const startTime = performance.now();
+      // If we don't have an active port yet, try to discover one
+      if (activePort === null) {
+        const portFound = await discoverPort();
+        if (!portFound) {
+          setServerStatus("disconnected");
+          setRetryCount((prev) => prev + 1);
+          reconnectionAttemptRef.current = false;
+          setConnectionDetails(
+            "Failed to find available server port. Tried: " +
+              FALLBACK_PORTS.join(", ")
+          );
+          return;
+        }
+      }
 
-          // Use the dedicated health check endpoint
-          const response = await fetch(`${apiUrl}/api/health-check`, {
-            method: "GET",
-            headers: { "Content-Type": "application/json" },
+      const currentApiUrl = getApiUrl();
+
+      // Try each endpoint in priority order
+      let connected = false;
+      for (const endpoint of ENDPOINT_PRIORITY) {
+        try {
+          console.log(`[CONNECTION] Trying endpoint: ${endpoint}`);
+          const response = await fetch(`${currentApiUrl}${endpoint}`, {
             signal: AbortSignal.timeout(3000),
             cache: "no-store",
           });
 
-          // Handle 401/403 responses as endpoint unavailable rather than as errors
-          if (response.status === 401 || response.status === 403) {
-            console.warn(
-              `[CONNECTION] Health check endpoint returned ${response.status}, treating as unavailable`
-            );
-            throw new Error(
-              `Health check endpoint returned ${response.status}`
-            );
+          if (response.ok) {
+            console.log(`[CONNECTION] Successfully connected to ${endpoint}`);
+            connected = true;
+            break;
           }
+        } catch (error: any) {
+          console.warn(
+            `[CONNECTION] Endpoint ${endpoint} failed:`,
+            error.message
+          );
 
-          if (!response.ok) throw new Error(`HTTP status ${response.status}`);
+          // Special handling for ECONNREFUSED errors
+          if (
+            error.message.includes("Failed to fetch") ||
+            error.message.includes("NetworkError")
+          ) {
+            // This could be ECONNREFUSED - try another port
+            const portDiscovered = await discoverPort();
+            if (portDiscovered) {
+              console.log(
+                "[CONNECTION] Found alternative port, retrying connection"
+              );
+              connected = await fetch(`${getApiUrl()}${endpoint}`, {
+                signal: AbortSignal.timeout(3000),
+                cache: "no-store",
+              })
+                .then((r) => r.ok)
+                .catch(() => false);
 
-          const responseTime = Math.round(performance.now() - startTime);
-          const data = await response.json();
-
-          return {
-            ok: true,
-            responseTime,
-            data,
-            dbConnected: data.database.connected,
-          };
-        };
-
-        // Try with retries
-        const result = await withRetry(() => checkHealth(), 2, 1000).catch(
-          async () => {
-            // Fallback to the older endpoint if health check fails
-            console.log(
-              "[CONNECTION] Health check failed, trying server-info endpoint"
-            );
-            const startTime = performance.now();
-            const response = await fetch(`${apiUrl}/api/server-info`, {
-              method: "HEAD",
-              headers: { "Content-Type": "application/json" },
-              signal: AbortSignal.timeout(3000),
-              cache: "no-store",
-            });
-
-            const responseTime = Math.round(performance.now() - startTime);
-            return {
-              ok: response.ok,
-              responseTime,
-              fallback: true,
-              dbConnected: true, // Assume connected since we can't check
-            };
+              if (connected) break;
+            }
           }
-        );
-
-        if (result.ok) {
-          // Connection successful
-          consecutiveFailsRef.current = 0;
-          lastGoodConnectionRef.current = now;
-
-          if (serverStatus !== "connected") {
-            console.log(
-              "[CONNECTION] Server connection established",
-              result.fallback ? "(using fallback endpoint)" : ""
-            );
-          }
-
-          setServerStatus("connected");
-          setServerDetails({
-            ...serverDetails,
-            url: apiUrl,
-            responseTime: result.responseTime,
-            lastSuccessful: new Date(),
-            dbStatus: result.dbConnected ? "connected" : "disconnected",
-          });
-
-          setRetryCount(0);
-          shouldLog.current = false;
-
-          // If we were disconnected before and now connected, reload the page
-          if (serverStatus === "disconnected" && retryCount > 10) {
-            window.location.reload();
-          }
-        } else {
-          throw new Error("Connection check failed");
         }
-      } catch (error) {
+      }
+
+      if (connected) {
+        // Connection successful
+        consecutiveFailsRef.current = 0;
+        lastGoodConnectionRef.current = now;
+
+        if (serverStatus !== "connected") {
+          console.log("[CONNECTION] Server connection established");
+        }
+
+        setServerStatus("connected");
+        setServerDetails({
+          ...serverDetails,
+          url: getApiUrl(),
+          responseTime: Date.now() - now,
+          lastSuccessful: new Date(),
+          dbStatus: "connected", // Assume connected since we got a response
+        });
+
+        setRetryCount(0);
+        shouldLog.current = false;
+
+        // If we were disconnected before and now connected, reload the page
+        if (serverStatus === "disconnected" && retryCount > 10) {
+          window.location.reload();
+        }
+      } else {
         consecutiveFailsRef.current++;
-        console.error("[CONNECTION] Server connection error:", error);
+        console.error("[CONNECTION] All connection attempts failed");
 
         // Check if we should fall back to local data and pretend to be connected
         if (shouldUseFallback()) {
@@ -239,11 +324,19 @@ const ServerConnectionMonitor: React.FC<ServerConnectionMonitorProps> = ({
         setServerStatus("disconnected");
         setRetryCount((prev) => prev + 1);
         shouldLog.current = true;
-      } finally {
-        reconnectionAttemptRef.current = false;
       }
+
+      reconnectionAttemptRef.current = false;
     },
-    [apiUrl, serverDetails, serverStatus, retryCount, shouldUseFallback]
+    [
+      serverStatus,
+      retryCount,
+      shouldUseFallback,
+      serverDetails,
+      discoverPort,
+      getApiUrl,
+      activePort,
+    ]
   );
 
   // Setup connection monitoring
@@ -291,21 +384,30 @@ const ServerConnectionMonitor: React.FC<ServerConnectionMonitorProps> = ({
     }
   }, [serverStatus, retryCount]);
 
+  // Modify handleManualRetry to reset port discovery
   const handleManualRetry = () => {
+    // Reset the active port to force rediscovery
+    setActivePort(null);
+    setConnectionDetails("Trying to discover server port...");
+
     // For manual retry, attempt with shorter timeout and force refresh if successful
     const attemptReconnect = async () => {
       try {
-        const response = await fetch(`${apiUrl}/api/server-info`, {
-          method: "HEAD",
-          headers: { "Content-Type": "application/json" },
-          signal: AbortSignal.timeout(5000),
-          cache: "no-store",
-        });
+        const portFound = await discoverPort();
 
-        if (response.ok) {
-          // Force reload to get fresh data
-          window.location.reload();
-          return;
+        if (portFound) {
+          const currentApiUrl = getApiUrl();
+          const response = await fetch(`${currentApiUrl}/api/server-info`, {
+            method: "HEAD",
+            signal: AbortSignal.timeout(5000),
+            cache: "no-store",
+          });
+
+          if (response.ok) {
+            // Force reload to get fresh data
+            window.location.reload();
+            return;
+          }
         }
 
         // Regular retry if the fast attempt fails
@@ -327,7 +429,7 @@ const ServerConnectionMonitor: React.FC<ServerConnectionMonitorProps> = ({
     return <>{children}</>;
   }
 
-  // If disconnected, show the error screen
+  // If disconnected, show the error screen with enhanced information
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-xl shadow-2xl p-6 max-w-xl w-full">
@@ -360,8 +462,8 @@ const ServerConnectionMonitor: React.FC<ServerConnectionMonitorProps> = ({
             <div className="flex items-start">
               <Database className="h-5 w-5 text-red-500 mt-0.5 mr-2" />
               <p className="text-gray-700">
-                <span className="font-medium">Database maintenance</span> -
-                System maintenance may be in progress
+                <span className="font-medium">Connection refused</span> - The
+                server port might be blocked or changed
               </p>
             </div>
           </div>
@@ -372,7 +474,10 @@ const ServerConnectionMonitor: React.FC<ServerConnectionMonitorProps> = ({
               {lastChecked?.toLocaleTimeString() || "None"}
             </p>
             <p>Retry attempts: {retryCount}</p>
-            <p>Server URL: {apiUrl}</p>
+            <p>Server URL: {getApiUrl()}</p>
+            {connectionDetails && (
+              <p className="text-xs text-orange-600">{connectionDetails}</p>
+            )}
           </div>
 
           <div className="mt-6 flex flex-col sm:flex-row gap-3">
@@ -403,12 +508,16 @@ const ServerConnectionMonitor: React.FC<ServerConnectionMonitorProps> = ({
               <pre className="mt-2 text-xs overflow-auto bg-gray-50 p-2 rounded border border-gray-200">
                 {JSON.stringify(
                   {
-                    serverUrl: apiUrl,
+                    serverUrl: getApiUrl(),
                     attempts: retryCount,
                     lastChecked: lastChecked?.toISOString(),
                     lastSuccessful: serverDetails.lastSuccessful?.toISOString(),
                     responseTime: serverDetails.responseTime,
+                    activePort: activePort,
+                    triedPorts: FALLBACK_PORTS.join(", "),
                     browserInfo: navigator.userAgent,
+                    error:
+                      "ECONNREFUSED - The server is not responding on the expected port",
                   },
                   null,
                   2
@@ -425,15 +534,20 @@ const ServerConnectionMonitor: React.FC<ServerConnectionMonitorProps> = ({
                 <li>Check if your internet connection is working</li>
                 <li>Try clearing browser cache and cookies</li>
                 <li>
-                  Contact your system administrator and provide the above
-                  information
+                  Verify the server is running on port{" "}
+                  {activePort || getBaseUrl().defaultPort}
                 </li>
                 <li>
-                  If you are the administrator, verify that the server is
-                  running at{" "}
-                  <span className="font-mono text-xs bg-gray-100 px-1 py-0.5 rounded">
-                    {apiUrl}
-                  </span>
+                  If you're an administrator:
+                  <ul className="list-disc ml-6 mt-1 text-sm">
+                    <li>Check if the server process is running</li>
+                    <li>
+                      Verify port {activePort || getBaseUrl().defaultPort} is
+                      not blocked by firewall
+                    </li>
+                    <li>Check server logs for errors</li>
+                    <li>Try restarting the server</li>
+                  </ul>
                 </li>
               </ol>
             </div>

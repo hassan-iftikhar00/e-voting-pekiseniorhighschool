@@ -577,9 +577,7 @@ const VotingAuth: React.FC = () => {
           <div className="flex items-center justify-center text-center">
             <Clock className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2 flex-shrink-0" />
             <span className="truncate max-w-[160px] sm:max-w-none">
-              {isLoadingElection ? (
-                <span className="animate-pulse">Checking status...</span>
-              ) : electionStatus === "active" ? (
+              {electionStatus === "active" ? (
                 <>Election in progress • Ends in: {timeRemaining}</>
               ) : electionStatus === "ended" ? (
                 <>Election has ended</>
