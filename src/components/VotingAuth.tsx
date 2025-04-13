@@ -94,12 +94,9 @@ const VotingAuth: React.FC = () => {
   const [electionStatus, setElectionStatus] = useState<
     "not-started" | "active" | "ended"
   >("not-started");
-  const [isLoadingElection, setIsLoadingElection] = useState(true);
 
   const fetchCurrentElection = async () => {
     try {
-      setIsLoadingElection(true);
-
       // Try the fast endpoint first
       const quickEndpoint = `${apiUrl}/api/election-status-quick?timestamp=${new Date().getTime()}`;
 
@@ -117,7 +114,6 @@ const VotingAuth: React.FC = () => {
         if (response.ok) {
           const data = await response.json();
           setCurrentElection(data);
-          setIsLoadingElection(false);
           return;
         }
       } catch (quickError) {
@@ -149,8 +145,6 @@ const VotingAuth: React.FC = () => {
         endTime: "17:00:00",
         isActive: contextElectionStatus === "active",
       });
-    } finally {
-      setIsLoadingElection(false);
     }
   };
 
@@ -551,23 +545,17 @@ const VotingAuth: React.FC = () => {
         <div className="bg-white/10 backdrop-blur-sm rounded-lg px-3 py-2 sm:px-6 sm:py-3 text-white border border-white/20 flex items-center whitespace-nowrap">
           <Calendar className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2 flex-shrink-0" />
           <span className="text-xs sm:text-sm font-bold truncate max-w-[160px] sm:max-w-none">
-            {isLoadingElection ? (
-              <span className="animate-pulse">Loading date...</span>
-            ) : currentElection ? (
-              `Election Date: ${formatElectionDate(
-                currentElection.endDate || currentElection.date
-              )}`
-            ) : (
-              "Date unavailable"
-            )}
+            {currentElection
+              ? `Election Date: ${formatElectionDate(
+                  currentElection.endDate || currentElection.date
+                )}`
+              : "Date unavailable"}
           </span>
         </div>
 
         <div
           className={`rounded-lg px-3 py-2 sm:px-6 sm:py-3 text-xs sm:text-sm font-medium whitespace-nowrap ${
-            isLoadingElection
-              ? "bg-gray-500 text-white"
-              : electionStatus === "active"
+            electionStatus === "active"
               ? "bg-green-500 text-white"
               : electionStatus === "ended"
               ? "bg-gray-500 text-white"
