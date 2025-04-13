@@ -17,6 +17,29 @@ import {
 // Load environment variables
 dotenv.config();
 
+// Add utility function for safely converting dates to ISO strings
+const safeToISOString = (date) => {
+  try {
+    if (!date || !(date instanceof Date) || isNaN(date.getTime())) {
+      return new Date().toISOString(); // fallback to current date
+    }
+    return date.toISOString();
+  } catch (error) {
+    console.warn("Date conversion error:", error);
+    return new Date().toISOString(); // fallback to current date
+  }
+};
+
+// Get safe current date in ISO format
+const getCurrentDateISO = () => {
+  try {
+    return new Date().toISOString().split("T")[0];
+  } catch (error) {
+    console.warn("Current date ISO format error:", error);
+    return "2023-01-01"; // Fallback to a safe default date
+  }
+};
+
 // Initialize Express app
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -54,7 +77,7 @@ function initCache() {
     {
       isActive: false,
       title: "Default Election",
-      date: new Date().toISOString().split("T")[0],
+      date: getCurrentDateISO(), // Use safe method instead of direct toISOString
       startTime: "08:00:00",
       endTime: "16:00:00",
     },
@@ -184,7 +207,7 @@ app.get("/api/health-check", (req, res) => {
   const healthData = {
     status: "ok",
     timestamp: Date.now(),
-    serverTime: new Date().toISOString(),
+    serverTime: safeToISOString(new Date()), // Use safe method
     uptime: process.uptime(),
     database: {
       status: mongoStatus,
@@ -260,7 +283,7 @@ app.get("/api/election-status-quick", async (req, res) => {
       // Create a minimal fallback
       const fallbackData = {
         title: "Election",
-        date: new Date().toISOString().split("T")[0],
+        date: getCurrentDateISO(), // Use safe method
         isActive: true,
         startTime: "08:00:00",
         endTime: "16:00:00",
@@ -280,7 +303,7 @@ app.get("/api/election-status-quick", async (req, res) => {
       console.log("No active election found, using defaults");
       const defaultData = {
         title: "Election",
-        date: new Date().toISOString().split("T")[0],
+        date: getCurrentDateISO(), // Use safe method
         isActive: false,
         message: "No active election found",
       };
@@ -359,7 +382,7 @@ app.get("/api/election-status-quick", async (req, res) => {
     // Ultimate fallback
     const errorFallback = {
       title: "Election Service Unavailable",
-      date: new Date().toISOString().split("T")[0],
+      date: getCurrentDateISO(), // Use safe method
       isActive: false,
       error: "Service temporarily unavailable",
     };
@@ -405,7 +428,7 @@ app.get("/server-info", (req, res) => {
     status: "online",
     port: process.env.PORT || 5000,
     timestamp: Date.now(),
-    serverTime: new Date().toISOString(),
+    serverTime: safeToISOString(new Date()), // Use safe method
     version: process.env.npm_package_version || "1.0.0",
   });
 });
@@ -424,7 +447,7 @@ app.get("/health", (req, res) => {
       status: mongoStatus,
       connectionTime:
         mongoose.connection.readyState === 1
-          ? new Date(mongoose.connection.openTime).toISOString()
+          ? safeToISOString(new Date(mongoose.connection.openTime)) // Use safe method
           : null,
     },
   });
