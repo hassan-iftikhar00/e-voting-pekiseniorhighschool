@@ -57,6 +57,12 @@ const ServerConnectionMonitor: React.FC<ServerConnectionMonitorProps> = ({
   // Get base URL without port
   const getBaseUrl = useCallback(() => {
     const url = import.meta.env.VITE_API_URL || "http://localhost:5000";
+    console.log("[CONNECTION] Processing API URL:", url);
+
+    // Check if this is a hosted URL (like Render.com)
+    const isHostedUrl =
+      url.includes("render.com") || url.startsWith("https://");
+
     // Extract the protocol and hostname without port
     const match = url.match(/^(https?:\/\/[^:\/]+)(:\d+)?(\/.*)?$/);
     if (match) {
@@ -65,17 +71,28 @@ const ServerConnectionMonitor: React.FC<ServerConnectionMonitorProps> = ({
         base: baseWithoutPort,
         defaultPort: port ? parseInt(port.substring(1)) : 5000,
         path,
+        isHosted: isHostedUrl,
       };
     }
-    return { base: "http://localhost", defaultPort: 5000, path: "" };
+    return {
+      base: "http://localhost",
+      defaultPort: 5000,
+      path: "",
+      isHosted: false,
+    };
   }, []);
 
-  // Get API URL with the active port
+  // Get API URL with the active port - modified to support hosted URLs
   const getApiUrl = useCallback(() => {
-    const { base, defaultPort, path } = getBaseUrl();
+    const { base, defaultPort, path, isHosted } = getBaseUrl();
+    // For hosted URLs, don't append port
+    if (isHosted) {
+      return `${base}${path}`;
+    }
+    // For local development or custom setups, use port
     const port = activePort || defaultPort;
     return `${base}:${port}${path}`;
-  }, [activePort]);
+  }, [activePort, getBaseUrl]);
 
   // Get exponential backoff delay based on retry count, but with more reasonable limits
   const getBackoffDelay = useCallback(() => {
@@ -146,44 +163,55 @@ const ServerConnectionMonitor: React.FC<ServerConnectionMonitorProps> = ({
   const tryConnect = useCallback(
     async (port: number): Promise<boolean> => {
       try {
-        const baseUrl = getBaseUrl().base;
-        const testUrl = `${baseUrl}:${port}/api/health-check`;
+        const { base, path, isHosted } = getBaseUrl();
+        // For hosted URLs, don't append port
+        const testUrl = isHosted
+          ? `${base}${path}/api/health-check`
+          : `${base}:${port}/api/health-check`;
 
-        console.log(`[CONNECTION] Trying port ${port} at ${testUrl}`);
+        console.log(`[CONNECTION] Trying connection at ${testUrl}`);
 
         const response = await fetch(testUrl, {
-          signal: AbortSignal.timeout(2000),
+          signal: AbortSignal.timeout(3000),
           cache: "no-store",
         });
 
         if (response.ok) {
-          console.log(`[CONNECTION] Successfully connected on port ${port}`);
-          setActivePort(port);
-          setConnectionDetails(`Connected to server on port ${port}`);
+          console.log(`[CONNECTION] Successfully connected to ${testUrl}`);
+          setActivePort(isHosted ? null : port);
+          setConnectionDetails(
+            `Connected to server ${isHosted ? base : `on port ${port}`}`
+          );
           return true;
         }
         return false;
       } catch (error: any) {
-        console.warn(
-          `[CONNECTION] Failed to connect on port ${port}:`,
-          error.message
-        );
+        console.warn(`[CONNECTION] Failed to connect: ${error.message}`);
         return false;
       }
     },
     [getBaseUrl]
   );
 
-  // Discover available port
+  // Discover available port - modified to handle hosted URLs
   const discoverPort = useCallback(async (): Promise<boolean> => {
-    const { defaultPort } = getBaseUrl();
+    const { defaultPort, isHosted } = getBaseUrl();
 
-    // Always try the default port first
+    // For hosted URLs, just try connecting without a port
+    if (isHosted) {
+      if (await tryConnect(0)) {
+        // 0 is a placeholder, won't be used
+        return true;
+      }
+      return false;
+    }
+
+    // Try the default port first for non-hosted URLs
     if (await tryConnect(defaultPort)) {
       return true;
     }
 
-    // Then try fallback ports
+    // Then try fallback ports for non-hosted URLs
     for (const port of FALLBACK_PORTS) {
       if (port !== defaultPort) {
         if (await tryConnect(port)) {
@@ -225,9 +253,12 @@ const ServerConnectionMonitor: React.FC<ServerConnectionMonitorProps> = ({
           setServerStatus("disconnected");
           setRetryCount((prev) => prev + 1);
           reconnectionAttemptRef.current = false;
+          const { isHosted } = getBaseUrl();
           setConnectionDetails(
-            "Failed to find available server port. Tried: " +
-              FALLBACK_PORTS.join(", ")
+            isHosted
+              ? "Failed to connect to hosted server. Check URL configuration."
+              : "Failed to find available server port. Tried: " +
+                  FALLBACK_PORTS.join(", ")
           );
           return;
         }
@@ -239,7 +270,9 @@ const ServerConnectionMonitor: React.FC<ServerConnectionMonitorProps> = ({
       let connected = false;
       for (const endpoint of ENDPOINT_PRIORITY) {
         try {
-          console.log(`[CONNECTION] Trying endpoint: ${endpoint}`);
+          console.log(
+            `[CONNECTION] Trying endpoint: ${currentApiUrl}${endpoint}`
+          );
           const response = await fetch(`${currentApiUrl}${endpoint}`, {
             signal: AbortSignal.timeout(3000),
             cache: "no-store",
@@ -336,6 +369,7 @@ const ServerConnectionMonitor: React.FC<ServerConnectionMonitorProps> = ({
       discoverPort,
       getApiUrl,
       activePort,
+      getBaseUrl,
     ]
   );
 
@@ -386,9 +420,16 @@ const ServerConnectionMonitor: React.FC<ServerConnectionMonitorProps> = ({
 
   // Modify handleManualRetry to reset port discovery
   const handleManualRetry = () => {
-    // Reset the active port to force rediscovery
-    setActivePort(null);
-    setConnectionDetails("Trying to discover server port...");
+    // Reset connection state to force rediscovery
+    const { isHosted } = getBaseUrl();
+    if (!isHosted) {
+      setActivePort(null);
+    }
+    setConnectionDetails(
+      isHosted
+        ? "Trying to connect to hosted server..."
+        : "Trying to discover server port..."
+    );
 
     // For manual retry, attempt with shorter timeout and force refresh if successful
     const attemptReconnect = async () => {
