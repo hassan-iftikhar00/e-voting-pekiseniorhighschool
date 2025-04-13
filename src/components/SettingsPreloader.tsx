@@ -21,6 +21,8 @@ interface DiagnosticInfo {
   timestamp: string;
   viteApiUrl: string;
   connectionMode: string;
+  checkAttempt?: number; // Added missing property
+  lastCheck?: string; // Added missing property
   proxyStatus?: string;
   proxyStatusCode?: number;
   proxyError?: string;
@@ -39,7 +41,7 @@ interface SettingsPreloaderProps {
 }
 
 const SettingsPreloader: React.FC<SettingsPreloaderProps> = ({ children }) => {
-  const { loading, error, refreshSettings } = useSettings();
+  const { loading, error, refreshSettings, updateSettings } = useSettings();
   const [retryCount, setRetryCount] = useState(0);
   const [showLoader, setShowLoader] = useState(true);
   const [showTechDetails, setShowTechDetails] = useState(false);
@@ -47,6 +49,11 @@ const SettingsPreloader: React.FC<SettingsPreloaderProps> = ({ children }) => {
   const [serverStatus, setServerStatus] = useState<
     "unknown" | "online" | "offline"
   >("unknown");
+  // Add missing state variables
+  const [connectionMethod, setConnectionMethod] = useState<
+    "none" | "proxy" | "direct"
+  >("none");
+  const [loadingSettings, setLoadingSettings] = useState(false);
   const [networkConnected, setNetworkConnected] = useState<boolean>(
     navigator.onLine
   );
@@ -56,6 +63,7 @@ const SettingsPreloader: React.FC<SettingsPreloaderProps> = ({ children }) => {
     timestamp: "",
     viteApiUrl: "",
     connectionMode: "",
+    checkAttempt: 0,
   });
 
   // API base URL - using relative path for proxy support
@@ -88,146 +96,67 @@ const SettingsPreloader: React.FC<SettingsPreloaderProps> = ({ children }) => {
   // Check server status when component mounts or retry is attempted
   useEffect(() => {
     const checkServerStatus = async () => {
-      // Collect diagnostic info
-      const diagInfo: DiagnosticInfo = {
-        browserInfo: navigator.userAgent,
-        networkStatus: navigator.onLine ? "Connected" : "Disconnected",
-        timestamp: new Date().toISOString(),
-        viteApiUrl: import.meta.env.VITE_API_URL || "Not defined",
-        connectionMode: "unknown",
-      };
+      const PROXY_URL = "/api/server-info";
+      const DIRECT_URL = `${
+        import.meta.env.VITE_API_URL || "http://localhost:5000"
+      }/api/server-info`;
+
+      setDiagnosticInfo((prev) => ({
+        ...prev,
+        lastCheck: new Date().toISOString(),
+        checkAttempt: (prev.checkAttempt || 0) + 1,
+      }));
 
       try {
-        console.log("[SERVER CHECK] Attempting server connection check");
+        // Try proxy first with short timeout
+        console.log("[SERVER CHECK] Trying proxy endpoint:", PROXY_URL);
+        let response = await fetch(PROXY_URL, {
+          method: "HEAD",
+          signal: AbortSignal.timeout(2000),
+        });
 
-        // First try the proxied path (should work if proxy is properly configured)
+        if (!response.ok)
+          throw new Error(`Proxy responded with ${response.status}`);
+
+        console.log("[SERVER CHECK] Server connected via proxy");
+        setServerStatus("online");
+        setConnectionMethod("proxy");
+        return true;
+      } catch (error) {
+        // Fix typing of error
+        const proxyError = error as Error;
+        console.warn("[SERVER CHECK] Proxy failed:", proxyError.message);
+
         try {
-          diagInfo.connectionMode = "proxy";
-          console.log(
-            `[SERVER CHECK] Trying proxied path: ${apiPath}/server-info`
-          );
-
-          const proxyResponse = await fetch(`${apiPath}/server-info`, {
+          // Fallback to direct connection
+          console.log("[SERVER CHECK] Trying direct connection:", DIRECT_URL);
+          const response = await fetch(DIRECT_URL, {
             method: "HEAD",
             signal: AbortSignal.timeout(3000),
-            headers: {
-              "Cache-Control": "no-cache, no-store",
-              Pragma: "no-cache",
-            },
           });
 
-          if (proxyResponse.ok) {
-            console.log("[SERVER CHECK] Proxy connection successful");
+          if (response.ok) {
+            console.log("[SERVER CHECK] Server connected directly");
             setServerStatus("online");
-            diagInfo.proxyStatus = "success";
-            diagInfo.proxyStatusCode = proxyResponse.status;
-            setDiagnosticInfo(diagInfo);
-            return;
+            setConnectionMethod("direct");
+            return true;
           }
 
-          diagInfo.proxyStatus = "failed";
-          diagInfo.proxyStatusCode = proxyResponse.status;
-          console.log(
-            `[SERVER CHECK] Proxy response not ok: ${proxyResponse.status}`
-          );
-        } catch (proxyError: any) {
           console.warn(
-            "[SERVER CHECK] Proxy connection failed:",
-            proxyError.message
+            "[SERVER CHECK] Direct connection failed with status:",
+            response.status
           );
-          diagInfo.proxyStatus = "error";
-          diagInfo.proxyError = proxyError.message;
-        }
-
-        // Fall back to direct URL if proxy fails
-        try {
-          diagInfo.connectionMode = "direct";
-          console.log(
-            `[SERVER CHECK] Trying direct URL: ${directApiUrl}/api/server-info`
-          );
-
-          const directResponse = await fetch(
-            `${directApiUrl}/api/server-info`,
-            {
-              method: "HEAD",
-              signal: AbortSignal.timeout(3000),
-              headers: {
-                "Cache-Control": "no-cache, no-store",
-                Pragma: "no-cache",
-              },
-            }
-          );
-
-          if (directResponse.ok) {
-            console.log("[SERVER CHECK] Direct connection successful");
-            setServerStatus("online");
-            diagInfo.directStatus = "success";
-            diagInfo.directStatusCode = directResponse.status;
-            setDiagnosticInfo(diagInfo);
-            return;
-          }
-
-          diagInfo.directStatus = "failed";
-          diagInfo.directStatusCode = directResponse.status;
-          console.log(
-            `[SERVER CHECK] Direct response not ok: ${directResponse.status}`
-          );
-        } catch (directError: any) {
-          console.warn(
-            "[SERVER CHECK] Direct connection failed:",
-            directError.message
-          );
-          diagInfo.directStatus = "error";
-          diagInfo.directError = directError.message;
-        }
-
-        // If all previous attempts fail, try the /health endpoint as last resort
-        try {
-          diagInfo.connectionMode = "health";
-          console.log(
-            `[SERVER CHECK] Trying health endpoint: ${directApiUrl}/health`
-          );
-
-          const healthResponse = await fetch(`${directApiUrl}/health`, {
-            method: "GET",
-            signal: AbortSignal.timeout(5000),
-          });
-
-          if (healthResponse.ok) {
-            console.log("[SERVER CHECK] Health check successful");
-            const healthData = await healthResponse.json();
-            diagInfo.healthData = healthData;
-            setServerStatus("online");
-            setDiagnosticInfo(diagInfo);
-            return;
-          }
-
-          diagInfo.healthStatus = "failed";
-          diagInfo.healthStatusCode = healthResponse.status;
-          console.log(
-            `[SERVER CHECK] Health check failed: ${healthResponse.status}`
-          );
-        } catch (healthError: any) {
+          return false;
+        } catch (error) {
+          // Fix typing of error
+          const directError = error as Error;
           console.error(
-            "[SERVER CHECK] Health check error:",
-            healthError.message
+            "[SERVER CHECK] Both proxy and direct connection failed"
           );
-          diagInfo.healthStatus = "error";
-          diagInfo.healthError = healthError.message;
+          setServerStatus("offline");
+          setConnectionMethod("none");
+          return false;
         }
-
-        // If we get here, all connection attempts failed
-        console.error("[SERVER CHECK] All connection attempts failed");
-        setServerStatus("offline");
-      } catch (error: any) {
-        console.error(
-          "[SERVER CHECK] Unhandled error during status check:",
-          error
-        );
-        diagInfo.unhandledError = error.message;
-        setServerStatus("offline");
-      } finally {
-        setDiagnosticInfo(diagInfo);
       }
     };
 
@@ -238,6 +167,84 @@ const SettingsPreloader: React.FC<SettingsPreloaderProps> = ({ children }) => {
     setRetryCount((prev) => prev + 1);
     setLastRetryTime(new Date());
     refreshSettings();
+  };
+
+  // Enhanced fetch settings function with better fallback handling
+  const fetchSettings = async () => {
+    if (serverStatus !== "online") {
+      console.log("[SETTINGS] Server offline, using cached settings");
+      return false;
+    }
+
+    setLoadingSettings(true);
+
+    try {
+      const endpoint =
+        connectionMethod === "direct"
+          ? `${
+              import.meta.env.VITE_API_URL || "http://localhost:5000"
+            }/api/settings`
+          : "/api/settings";
+
+      console.log(`[SETTINGS] Fetching settings from ${endpoint}`);
+      const response = await fetch(endpoint, {
+        signal: AbortSignal.timeout(5000),
+        headers: {
+          "Cache-Control": "no-cache",
+          Pragma: "no-cache",
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(
+          `Settings fetch failed with status: ${response.status}`
+        );
+      }
+
+      const data = await response.json();
+      console.log("[SETTINGS] Successfully loaded settings from server");
+
+      // Use updateSettings from context instead of setSettings
+      updateSettings(data);
+      localStorage.setItem(
+        "settings",
+        JSON.stringify({
+          data,
+          timestamp: Date.now(),
+        })
+      );
+
+      setLoadingSettings(false);
+      return true;
+    } catch (error) {
+      const err = error as Error;
+      console.error("[SETTINGS] Failed to fetch settings:", err.message);
+
+      // Try to load from localStorage as fallback
+      const cachedSettings = localStorage.getItem("settings");
+      if (cachedSettings) {
+        try {
+          const { data, timestamp } = JSON.parse(cachedSettings);
+          const cacheAge = Date.now() - timestamp;
+
+          if (cacheAge < 3600000) {
+            // Less than 1 hour old
+            console.log("[SETTINGS] Using cached settings from localStorage");
+            updateSettings(data);
+          } else {
+            console.warn("[SETTINGS] Cached settings too old, not using");
+          }
+        } catch (cacheError) {
+          console.error(
+            "[SETTINGS] Error parsing cached settings:",
+            cacheError
+          );
+        }
+      }
+
+      setLoadingSettings(false);
+      return false;
+    }
   };
 
   // If we're loading settings for the first time, show the loader

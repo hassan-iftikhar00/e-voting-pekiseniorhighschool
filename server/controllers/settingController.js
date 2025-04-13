@@ -1,11 +1,34 @@
 import Setting from "../models/Setting.js";
 import Election from "../models/Election.js";
+import { getCircuitBreaker } from "../utils/circuitBreaker.js";
+import cacheManager from "../utils/cacheManager.js";
 
-// Improved cache mechanism with timeout protection
-let settingsCache = null;
-let settingsCacheTime = null;
-const CACHE_MAX_AGE = 10 * 60 * 1000; // 10 minutes
+// Timeout constants
 const QUERY_TIMEOUT = 10000; // 10 seconds
+const ELECTION_QUERY_TIMEOUT = 5000; // 5 seconds
+
+// Create circuit breaker for settings with more robust fallback
+const settingsCircuitBreaker = getCircuitBreaker("settings", {
+  failureThreshold: 3,
+  resetTimeout: 60000, // 1 minute
+  successThreshold: 2, // 2 successful operations to close circuit
+  fallback: (req, res) => {
+    console.log("[CIRCUIT BREAKER] Using fallback for settings");
+
+    // Use cache if available (even if expired)
+    const cachedSettings = cacheManager.get("settings", { allowExpired: true });
+    if (cachedSettings) {
+      console.log("[CIRCUIT BREAKER] Returning cached settings as fallback");
+      res.set("X-Settings-Source", "circuit-breaker-cache");
+      return cachedSettings;
+    }
+
+    // Create defaults as last resort
+    console.log("[CIRCUIT BREAKER] Creating default settings as last resort");
+    const defaultSettings = createDefaultSettings();
+    return defaultSettings;
+  },
+});
 
 // Get settings with timeout and fallback
 export const getSettings = async (req, res) => {
@@ -15,20 +38,22 @@ export const getSettings = async (req, res) => {
   );
 
   try {
-    // Check for valid cache
-    if (settingsCache && Date.now() - settingsCacheTime < CACHE_MAX_AGE) {
+    // Try to get cached settings first (using the new cache manager)
+    const cachedSettings = cacheManager.get("settings");
+    if (cachedSettings) {
       console.log(
         `[PERF][SERVER] Returning cached settings from ${new Date(
-          settingsCacheTime
+          cacheManager.cache.get("settings").created
         ).toISOString()}`
       );
 
-      // Add ETag for caching
-      res.set("ETag", `"${settingsCacheTime}"`);
+      // Add ETag for client-side caching
+      const etag = `"${cacheManager.cache.get("settings").created}"`;
+      res.set("ETag", etag);
 
       // Check if client has the latest version
       const clientETag = req.headers["if-none-match"];
-      if (clientETag === `"${settingsCacheTime}"`) {
+      if (clientETag === etag) {
         console.log(
           `[PERF][SERVER] Client has current version, returning 304 Not Modified`
         );
@@ -37,105 +62,128 @@ export const getSettings = async (req, res) => {
       }
 
       console.log(`[PERF][SERVER] Total time: ${Date.now() - startTime}ms`);
-      return res.json(settingsCache);
+      res.set("X-Settings-Source", "cache");
+      return res.json(cachedSettings);
     }
 
-    // If we need to fetch from database, use a timeout
-    console.log(
-      "[PERF][SERVER] Fetching settings from database with timeout protection"
-    );
-    const dbFetchStart = Date.now();
+    // Execute with circuit breaker protection
+    const settings = await settingsCircuitBreaker.execute(
+      async () => {
+        // If we need to fetch from database, use a timeout
+        console.log(
+          "[PERF][SERVER] Fetching settings from database with timeout protection"
+        );
+        const dbFetchStart = Date.now();
 
-    // Create a promise that will reject after timeout
-    const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => {
-        reject(new Error("Database query timed out"));
-      }, QUERY_TIMEOUT);
+        // Create a promise that will reject after timeout
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => {
+            reject(new Error("Database query timed out"));
+          }, QUERY_TIMEOUT);
+        });
+
+        // Create the actual database query
+        const queryPromise = Setting.findOne().lean().exec();
+
+        // Race the query against the timeout
+        let settings;
+        try {
+          settings = await Promise.race([queryPromise, timeoutPromise]);
+        } catch (timeoutError) {
+          console.warn(
+            "[PERF][SERVER] Settings query timed out, using fallback"
+          );
+
+          // Try to get expired cache as fallback
+          const expiredCache = cacheManager.get("settings", {
+            allowExpired: true,
+          });
+          if (expiredCache) {
+            console.log(
+              "[PERF][SERVER] Using expired cached settings as fallback"
+            );
+            res.set("X-Settings-Source", "expired-cache-fallback");
+            return expiredCache;
+          }
+
+          // Create default settings if no cache available
+          settings = createDefaultSettings();
+          res.set("X-Settings-Source", "default-fallback");
+        }
+
+        console.log(
+          `[PERF][SERVER] Settings DB fetch took: ${
+            Date.now() - dbFetchStart
+          }ms`
+        );
+
+        if (!settings) {
+          console.log("[PERF][SERVER] Creating new settings document");
+          const newSettings = createDefaultSettings();
+
+          // Try to save in background but don't wait for it
+          Setting.create(newSettings).catch((err) =>
+            console.error("Error saving default settings:", err)
+          );
+
+          settings = newSettings;
+        }
+
+        return settings;
+      },
+      req,
+      res
+    );
+
+    // If circuit breaker fallback sent a response directly, we're done
+    if (!settings) return;
+
+    // Cache the settings (this happens regardless of source)
+    cacheManager.set("settings", settings, {
+      ttl: 10 * 60 * 1000, // 10 minutes
+      source: "database",
     });
 
-    // Create the actual database query
-    const queryPromise = Setting.findOne().lean().exec();
-
-    // Race the query against the timeout
-    let settings;
+    // Try to add supplemental election data
     try {
-      settings = await Promise.race([queryPromise, timeoutPromise]);
-    } catch (timeoutError) {
-      console.warn(
-        "[PERF][SERVER] Settings query timed out, using default values"
-      );
-
-      // Check if we have a previous cache we can use
-      if (settingsCache) {
-        console.log(
-          "[PERF][SERVER] Using previous cached settings as fallback"
-        );
-        res.set("X-Settings-Source", "cached-fallback");
-        return res.json(settingsCache);
-      }
-
-      // Create default settings if no cache available
-      settings = createDefaultSettings();
-      res.set("X-Settings-Source", "default-fallback");
-    }
-
-    console.log(
-      `[PERF][SERVER] Settings DB fetch took: ${Date.now() - dbFetchStart}ms`
-    );
-
-    if (!settings) {
-      console.log("[PERF][SERVER] Creating new settings document");
-      const newSettings = createDefaultSettings();
-
-      // Try to save in background but don't wait for it
-      Setting.create(newSettings).catch((err) =>
-        console.error("Error saving default settings:", err)
-      );
-
-      settings = newSettings;
-    }
-
-    // Update cache
-    settingsCache = settings;
-    settingsCacheTime = Date.now();
-
-    // Get current election data to supplement settings
-    const electionFetchStart = Date.now();
-    let currentElection;
-
-    try {
-      currentElection = await Promise.race([
+      const electionFetchStart = Date.now();
+      const currentElection = await Promise.race([
         Election.findOne({ isCurrent: true }).lean().exec(),
         new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("Election query timeout")), 5000)
+          setTimeout(
+            () => reject(new Error("Election query timeout")),
+            ELECTION_QUERY_TIMEOUT
+          )
         ),
       ]);
+
+      console.log(
+        `[PERF][SERVER] Election DB fetch took: ${
+          Date.now() - electionFetchStart
+        }ms`
+      );
+
+      if (currentElection) {
+        // Synchronize election dates with settings
+        settings.electionDate = currentElection.date;
+        settings.electionStartDate =
+          currentElection.startDate || currentElection.date;
+        settings.electionEndDate =
+          currentElection.endDate || currentElection.date;
+        settings.electionStartTime =
+          currentElection.startTime?.substring(0, 5) || "08:00";
+        settings.electionEndTime =
+          currentElection.endTime?.substring(0, 5) || "17:00";
+        settings.electionTitle =
+          currentElection.title || settings.electionTitle;
+        settings.isActive = currentElection.isActive;
+      }
     } catch (electionError) {
       console.warn(
-        "[PERF][SERVER] Election fetch timed out, using cached values if available"
+        "[PERF][SERVER] Election fetch error:",
+        electionError.message
       );
       // Proceed without election data
-    }
-
-    console.log(
-      `[PERF][SERVER] Election DB fetch took: ${
-        Date.now() - electionFetchStart
-      }ms`
-    );
-
-    if (currentElection) {
-      // Synchronize election dates with settings
-      settings.electionDate = currentElection.date;
-      settings.electionStartDate =
-        currentElection.startDate || currentElection.date;
-      settings.electionEndDate =
-        currentElection.endDate || currentElection.date;
-      settings.electionStartTime =
-        currentElection.startTime?.substring(0, 5) || "08:00";
-      settings.electionEndTime =
-        currentElection.endTime?.substring(0, 5) || "17:00";
-      settings.electionTitle = currentElection.title || settings.electionTitle;
-      settings.isActive = currentElection.isActive;
     }
 
     console.log(
@@ -143,19 +191,24 @@ export const getSettings = async (req, res) => {
         Date.now() - startTime
       }ms`
     );
+
+    // Set ETag for client caching
+    const etag = `"${Date.now()}"`;
+    res.set("ETag", etag);
     res.set("X-Settings-Source", "database");
-    res.set("ETag", `"${settingsCacheTime}"`);
+
     return res.json(settings);
   } catch (error) {
     console.error("Error retrieving settings:", error);
 
-    // If we have cached settings, return those even on error
-    if (settingsCache) {
+    // Try to get even expired cached settings in case of error
+    const cachedSettings = cacheManager.get("settings", { allowExpired: true });
+    if (cachedSettings) {
       console.log(
         "[PERF][SERVER] Error fetching settings, using cached version"
       );
       res.set("X-Settings-Source", "error-fallback");
-      return res.json(settingsCache);
+      return res.json(cachedSettings);
     }
 
     // Last resort - create default settings
@@ -222,23 +275,12 @@ export const updateSettings = async (req, res) => {
     }
 
     // Update settings model
-    if (systemName) {
-      settings.systemName = systemName;
-    }
-    // Update companyName and schoolName independently
-    if (req.body.companyName) {
-      settings.companyName = req.body.companyName;
-    }
-    if (req.body.schoolName) {
-      settings.schoolName = req.body.schoolName;
-    }
-    // Update companyLogo and schoolLogo independently
-    if (req.body.companyLogo) {
-      settings.companyLogo = req.body.companyLogo;
-    }
-    if (req.body.schoolLogo) {
-      settings.schoolLogo = req.body.schoolLogo;
-    }
+    if (systemName) settings.systemName = systemName;
+    if (req.body.companyName) settings.companyName = req.body.companyName;
+    if (req.body.schoolName) settings.schoolName = req.body.schoolName;
+    if (req.body.companyLogo) settings.companyLogo = req.body.companyLogo;
+    if (req.body.schoolLogo) settings.schoolLogo = req.body.schoolLogo;
+
     settings.electionTitle = electionTitle;
     settings.votingStartDate = votingStartDate;
     settings.votingEndDate = votingEndDate;
@@ -333,8 +375,8 @@ export const updateSettings = async (req, res) => {
     }
 
     // Invalidate cache when settings are updated
-    settingsCache = null;
-    settingsCacheTime = null;
+    cacheManager.invalidate("settings");
+    cacheManager.invalidate("electionStatus");
 
     res.status(200).json({
       message: "Settings updated successfully",

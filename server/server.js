@@ -7,6 +7,12 @@ import { fileURLToPath } from "url";
 import fs from "fs";
 import apiRoutes from "./routes/api.js";
 import "./models/ActivityLog.js";
+import { initDbMonitoring, getDbHealth } from "./utils/dbMonitor.js";
+import cacheManager from "./utils/cacheManager.js";
+import {
+  getAllCircuitBreakerStats,
+  resetAllCircuitBreakers,
+} from "./utils/circuitBreaker.js";
 
 // Load environment variables
 dotenv.config();
@@ -15,20 +21,113 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Simple in-memory cache for critical data
-const cache = {
-  electionStatus: null,
-  electionStatusTime: null,
-  settings: null,
-  settingsTime: null,
+// Add server readiness checks
+let isServerReady = false;
+const readyChecks = {
+  db: false,
+  cache: false,
 };
 
-// Cache duration in ms (5 minutes)
-const CACHE_DURATION = 5 * 60 * 1000;
+// Add dbHealth object to track database health
+let dbHealth = {
+  status: "initializing",
+  lastCheck: new Date(),
+  connectionAttempts: 0,
+  connectionIssues: 0,
+  slowQueries: 0,
+  averageQueryTime: 0,
+  lastSuccessfulQuery: null,
+};
 
-// Middleware to attach cache to request object
+// Initialize cache globals instead of basic objects
+const CACHE_DURATION = {
+  ELECTION_STATUS: 5 * 60 * 1000, // 5 minutes
+  SETTINGS: 10 * 60 * 1000, // 10 minutes
+  HEALTH: 30 * 1000, // 30 seconds
+};
+
+// Enhanced cache initialization with default values
+function initCache() {
+  // Initialize election status with default values instead of null
+  cacheManager.set(
+    "electionStatus",
+    {
+      isActive: false,
+      title: "Default Election",
+      date: new Date().toISOString().split("T")[0],
+      startTime: "08:00:00",
+      endTime: "16:00:00",
+    },
+    {
+      ttl: CACHE_DURATION.ELECTION_STATUS,
+      source: "startup-defaults",
+    }
+  );
+
+  // Initialize settings with default values
+  cacheManager.set(
+    "settings",
+    {
+      systemName: "Peki Senior High School E-Voting System",
+      electionTitle: "School Prefect Elections",
+      isActive: false,
+      votingStartTime: "08:00",
+      votingEndTime: "16:00",
+    },
+    {
+      ttl: CACHE_DURATION.SETTINGS,
+      source: "startup-defaults",
+    }
+  );
+
+  readyChecks.cache = true;
+  checkServerReady();
+}
+
+// Initialize cache at startup
+initCache();
+
+// Check if server is ready to serve requests
+function checkServerReady() {
+  if (Object.values(readyChecks).every(Boolean)) {
+    isServerReady = true;
+    console.log("🟢 Server is now ready to accept requests");
+  }
+}
+
+// Add middleware to check server readiness
 app.use((req, res, next) => {
-  req.cache = cache;
+  // Always allow health check and server-info endpoints
+  if (
+    req.path === "/health" ||
+    req.path === "/api/health" ||
+    req.path === "/server-info" ||
+    req.path === "/api/server-info" ||
+    req.path === "/api/health-check"
+  ) {
+    return next();
+  }
+
+  if (!isServerReady) {
+    return res.status(503).json({
+      status: "unavailable",
+      message: "Server is starting up",
+      readyChecks,
+      uptime: process.uptime(),
+    });
+  }
+  next();
+});
+
+// Middleware to attach cache to request object (keep for backward compatibility)
+app.use((req, res, next) => {
+  req.cache = {
+    electionStatus: cacheManager.get("electionStatus"),
+    electionStatusTime:
+      cacheManager.cache.get("electionStatus")?.created || null,
+    settings: cacheManager.get("settings"),
+    settingsTime: cacheManager.cache.get("settings")?.created || null,
+  };
   next();
 });
 
@@ -70,18 +169,56 @@ app.get("/", (req, res) => {
   res.send("Server is running");
 });
 
-// Quick election status endpoint (with caching)
+// Add a dedicated health check endpoint - MUST be before API routes are mounted
+app.get("/api/health-check", (req, res) => {
+  const mongoReadyState = mongoose.connection.readyState;
+  const mongoStatus =
+    ["disconnected", "connected", "connecting", "disconnecting"][
+      mongoReadyState
+    ] || "unknown";
+
+  // Update dbHealth before responding
+  dbHealth.status = mongoStatus;
+  dbHealth.lastCheck = new Date();
+
+  const healthData = {
+    status: "ok",
+    timestamp: Date.now(),
+    serverTime: new Date().toISOString(),
+    uptime: process.uptime(),
+    database: {
+      status: mongoStatus,
+      connected: mongoReadyState === 1,
+      connectionAttempts: dbHealth.connectionAttempts || 0,
+    },
+    memory: {
+      rss: Math.round(process.memoryUsage().rss / (1024 * 1024)) + "MB",
+      heapTotal:
+        Math.round(process.memoryUsage().heapTotal / (1024 * 1024)) + "MB",
+      heapUsed:
+        Math.round(process.memoryUsage().heapUsed / (1024 * 1024)) + "MB",
+    },
+    cache: cacheManager.getStats(),
+    version: process.env.npm_package_version || "1.0.0",
+  };
+
+  // Set appropriate HTTP headers for better caching and cross-origin support
+  res.set("Access-Control-Allow-Origin", "*");
+  res.set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+  res.set("Cache-Control", "no-cache");
+  res.status(200).json(healthData);
+});
+
+// Quick election status endpoint (with improved caching)
 app.get("/api/election-status-quick", async (req, res) => {
   try {
     const now = Date.now();
 
-    // Check if we have a cached valid election status
-    if (
-      cache.electionStatus &&
-      now - cache.electionStatusTime < CACHE_DURATION
-    ) {
+    // Get from cache first (more robust caching with the new cache manager)
+    const cachedStatus = cacheManager.get("electionStatus");
+    if (cachedStatus) {
       console.log("Serving election status from cache");
-      return res.json(cache.electionStatus);
+      return res.json(cachedStatus);
     }
 
     // If no cache, fetch from database with timeout protection
@@ -110,26 +247,53 @@ app.get("/api/election-status-quick", async (req, res) => {
     } catch (timeoutError) {
       console.warn("Election query timed out, using cached data if available");
 
-      // If we have cached data, use it
-      if (cache.electionStatus) {
-        return res.json(cache.electionStatus);
+      // Try to get expired cache if available
+      const expiredCache = cacheManager.get("electionStatus", {
+        allowExpired: true,
+      });
+      if (expiredCache) {
+        console.log("Using expired cache for election status");
+        res.set("X-Cache-Status", "expired");
+        return res.json(expiredCache);
       }
 
       // Create a minimal fallback
-      return res.json({
+      const fallbackData = {
         title: "Election",
         date: new Date().toISOString().split("T")[0],
         isActive: true,
         startTime: "08:00:00",
         endTime: "16:00:00",
+      };
+
+      // Cache the fallback to prevent repeated failures
+      cacheManager.set("electionStatus", fallbackData, {
+        ttl: 60000, // Short TTL for fallback data
+        source: "fallback",
       });
+
+      res.set("X-Cache-Status", "fallback");
+      return res.json(fallbackData);
     }
 
     if (!election) {
-      return res.status(404).json({ message: "No active election found" });
+      console.log("No active election found, using defaults");
+      const defaultData = {
+        title: "Election",
+        date: new Date().toISOString().split("T")[0],
+        isActive: false,
+        message: "No active election found",
+      };
+
+      cacheManager.set("electionStatus", defaultData, {
+        ttl: CACHE_DURATION.ELECTION_STATUS,
+        source: "default-no-election",
+      });
+
+      return res.status(200).json(defaultData);
     }
 
-    // Fetch settings only if we need to - with timeout
+    // Attempt to get settings to enhance the response
     let settings = null;
     try {
       const settingsQuery = Setting.findOne()
@@ -164,29 +328,43 @@ app.get("/api/election-status-quick", async (req, res) => {
         (settings ? settings.votingEndTime + ":00" : "16:00:00"),
     };
 
-    // Cache the result
-    cache.electionStatus = response;
-    cache.electionStatusTime = now;
+    // Cache the result with the new cache manager
+    cacheManager.set("electionStatus", response, {
+      ttl: CACHE_DURATION.ELECTION_STATUS,
+      source: "database",
+    });
 
-    console.log("Sending election status with:", {
+    console.log("Successfully fetched election status:", {
       startDate: response.startDate,
       endDate: response.endDate,
       date: response.date,
       isActive: response.isActive,
     });
 
+    res.set("X-Cache-Status", "fresh");
     return res.json(response);
   } catch (error) {
     console.error("Error in quick election status:", error);
 
-    // If we have a cache, use it even on error
-    if (cache.electionStatus) {
-      return res.json(cache.electionStatus);
+    // Try to get any cached data, even if expired
+    const cachedStatus = cacheManager.get("electionStatus", {
+      allowExpired: true,
+    });
+    if (cachedStatus) {
+      console.log("Using potentially expired cache due to error");
+      res.set("X-Cache-Status", "error-fallback");
+      return res.json(cachedStatus);
     }
 
-    return res
-      .status(500)
-      .json({ message: "Server error", error: error.message });
+    // Ultimate fallback
+    const errorFallback = {
+      title: "Election Service Unavailable",
+      date: new Date().toISOString().split("T")[0],
+      isActive: false,
+      error: "Service temporarily unavailable",
+    };
+
+    return res.status(200).json(errorFallback);
   }
 });
 
@@ -234,7 +412,12 @@ app.get("/server-info", (req, res) => {
 
 // Enhanced health check endpoint
 app.get("/health", (req, res) => {
-  // Get MongoDB connection state text
+  // Try to get cached health data first
+  const cachedHealth = cacheManager.get("healthStatus", { allowExpired: true });
+  if (cachedHealth && !req.query.refresh) {
+    return res.status(200).json(cachedHealth);
+  }
+
   const mongoStates = [
     "disconnected",
     "connected",
@@ -245,6 +428,11 @@ app.get("/health", (req, res) => {
 
   const mongoReadyState = mongoose.connection.readyState;
   const mongoStatus = mongoStates[mongoReadyState] || "unknown";
+  const dbHealthInfo = getDbHealth();
+
+  // Update dbHealth before responding
+  dbHealth.status = mongoStatus;
+  dbHealth.lastCheck = new Date();
 
   // Check if we have a recent successful query
   const dbHealthy = mongoReadyState === 1;
@@ -252,37 +440,45 @@ app.get("/health", (req, res) => {
   // Get memory usage
   const memoryUsage = process.memoryUsage();
 
-  // Get cache status
-  const cacheStatus = {
-    electionStatus: !!cache.electionStatus,
-    electionStatusTime: cache.electionStatusTime
-      ? new Date(cache.electionStatusTime).toISOString()
-      : null,
-    settings: !!cache.settings,
-    settingsTime: cache.settingsTime
-      ? new Date(cache.settingsTime).toISOString()
-      : null,
-  };
+  // Get circuit breaker stats
+  const circuitBreakerStats = getAllCircuitBreakerStats();
 
-  res.status(200).json({
-    status: dbHealthy ? "ok" : "degraded",
+  // Get cache statistics
+  const cacheStats = cacheManager.getStats();
+
+  const healthData = {
+    status: isServerReady ? (dbHealthy ? "ok" : "degraded") : "starting",
     timestamp: Date.now(),
     uptime: process.uptime(),
+    ready: isServerReady,
+    readyChecks: readyChecks,
     mongodb: {
       status: mongoStatus,
       connected: dbHealthy,
       connectionTime: mongoose.connection.openTime
         ? new Date(mongoose.connection.openTime).toISOString()
         : null,
+      health: dbHealthInfo,
     },
     memory: {
       rss: Math.round(memoryUsage.rss / 1024 / 1024) + "MB",
       heapTotal: Math.round(memoryUsage.heapTotal / 1024 / 1024) + "MB",
       heapUsed: Math.round(memoryUsage.heapUsed / 1024 / 1024) + "MB",
     },
-    cache: cacheStatus,
+    cache: cacheStats,
+    circuitBreakers: circuitBreakerStats,
     version: process.env.npm_package_version || "1.0.0",
+  };
+
+  // Cache the health data for 30 seconds
+  cacheManager.set("healthStatus", healthData, {
+    ttl: CACHE_DURATION.HEALTH,
+    source: "health-check",
   });
+
+  // Return appropriate status code
+  const statusCode = isServerReady ? 200 : 503;
+  res.status(statusCode).json(healthData);
 });
 
 // Debug middleware for bulk import
@@ -320,6 +516,16 @@ app.use("/api/voters/bulk", (req, res, next) => {
 // Global error handler middleware
 app.use((err, req, res, next) => {
   console.error("Global error handler caught:", err);
+
+  // Ensure dbHealth exists
+  if (typeof dbHealth === "undefined") {
+    dbHealth = {
+      status: "error",
+      lastCheck: new Date(),
+      connectionAttempts: 0,
+      error: "dbHealth was undefined",
+    };
+  }
 
   const error =
     process.env.NODE_ENV === "production"
@@ -398,27 +604,35 @@ if (process.env.NODE_ENV !== "production") {
   });
 }
 
+// Enable additional Mongoose options for better stability
+mongoose.set("bufferCommands", false); // Disable buffering to avoid memory issues
+mongoose.set("autoIndex", false); // Disable automatic index building in production
+
 // MongoDB connection with improved error handling and optimized settings
 console.log("Connecting to MongoDB at:", process.env.MONGODB_URI);
+const mongooseOptions = {
+  serverSelectionTimeoutMS: 30000,
+  socketTimeoutMS: 45000,
+  connectTimeoutMS: 30000,
+  retryWrites: true,
+  retryReads: true,
+  maxPoolSize: 50,
+  minPoolSize: 5,
+  maxIdleTimeMS: 60000,
+  // Remove the problematic sslValidate option
+  ssl: true,
+  tlsAllowInvalidCertificates: false,
+  // Add read preference to prefer reading from secondaries if available
+  readPreference: "primaryPreferred",
+  // Add write concern for better reliability
+  w: "majority",
+  wtimeoutMS: 30000,
+};
+
 mongoose
   .connect(
     process.env.MONGODB_URI || "mongodb://localhost:27017/eVotingSystem",
-    {
-      retryWrites: true,
-      serverSelectionTimeoutMS: 30000,
-      connectTimeoutMS: 15000,
-      socketTimeoutMS: 45000,
-      // Add performance optimizations
-      maxPoolSize: 20,
-      minPoolSize: 5,
-      maxIdleTimeMS: 60000,
-      // Add read preference to prefer reading from secondaries if available
-      readPreference: "primaryPreferred",
-      // Add connection pool monitoring
-      heartbeatFrequencyMS: 30000,
-      // Enable driver level retries for reads
-      retryReads: true,
-    }
+    mongooseOptions
   )
   .then(() => {
     console.log("Connected to MongoDB");
@@ -426,10 +640,11 @@ mongoose
   })
   .catch((err) => {
     console.error("MongoDB connection error:", err);
+    // Implement graceful fallback
     if (process.env.NODE_ENV !== "production") {
-      process.exit(1);
+      console.warn("Proceeding with limited functionality in development mode");
+      startServer(); // Start server without DB connection
     } else {
-      // In production, try to start server anyway
       console.log(
         "Attempting to start server despite MongoDB connection issues"
       );
@@ -437,18 +652,55 @@ mongoose
     }
   });
 
-// Add connection event listeners for better monitoring
+// Add more robust connection event listeners
 mongoose.connection.on("error", (err) => {
   console.error("MongoDB connection error:", err);
+  // Update dbHealth
+  dbHealth.status = "error";
+  dbHealth.lastCheck = new Date();
+  dbHealth.connectionIssues++;
+  readyChecks.db = false;
+
+  // Try to reconnect manually if needed
+  if (err.name === "MongoNetworkTimeoutError") {
+    console.log("Attempting to manually reconnect due to timeout...");
+    dbHealth.connectionAttempts++;
+    mongoose
+      .connect(
+        process.env.MONGODB_URI || "mongodb://localhost:27017/eVotingSystem"
+      )
+      .catch((err) => console.error("Manual reconnection failed:", err));
+  }
 });
 
 mongoose.connection.on("disconnected", () => {
   console.log("MongoDB disconnected, attempting to reconnect...");
+  dbHealth.status = "disconnected";
+  dbHealth.lastCheck = new Date();
+  readyChecks.db = false;
+  checkServerReady();
 });
 
 mongoose.connection.on("reconnected", () => {
   console.log("MongoDB reconnected successfully");
+  dbHealth.status = "connected";
+  dbHealth.lastCheck = new Date();
+  dbHealth.lastSuccessfulQuery = new Date();
+  readyChecks.db = true;
+  checkServerReady();
 });
+
+mongoose.connection.on("connected", () => {
+  console.log("MongoDB connected successfully");
+  dbHealth.status = "connected";
+  dbHealth.lastCheck = new Date();
+  dbHealth.lastSuccessfulQuery = new Date();
+  readyChecks.db = true;
+  checkServerReady();
+});
+
+// Initialize DB monitoring
+initDbMonitoring();
 
 // Server startup function
 const startServer = () => {
@@ -477,5 +729,49 @@ const startServer = () => {
     }
   });
 };
+
+// Add a cache control endpoint for admins
+app.post("/api/admin/cache/clear", async (req, res) => {
+  try {
+    // Check for auth - this should be properly secured in production
+    if (!req.headers.authorization) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    const keys = req.body.keys || [];
+    let result;
+
+    if (keys.length === 0) {
+      // Clear all cache
+      result = cacheManager.clear();
+      console.log(`Cleared all cache entries (${result} items)`);
+    } else {
+      // Clear specific keys
+      result = 0;
+      for (const key of keys) {
+        if (cacheManager.invalidate(key)) {
+          result++;
+        }
+      }
+      console.log(`Cleared ${result} specific cache keys`);
+    }
+
+    // Reset circuit breakers if requested
+    if (req.body.resetCircuitBreakers) {
+      const resetCount = resetAllCircuitBreakers();
+      console.log(`Reset ${resetCount} circuit breakers`);
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Cleared ${result} cache entries`,
+      cacheStats: cacheManager.getStats(),
+      circuitBreakers: getAllCircuitBreakerStats(),
+    });
+  } catch (error) {
+    console.error("Error clearing cache:", error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
 
 export default app;

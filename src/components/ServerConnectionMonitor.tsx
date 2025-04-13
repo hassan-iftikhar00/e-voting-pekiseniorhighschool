@@ -18,6 +18,7 @@ const ServerConnectionMonitor: React.FC<ServerConnectionMonitorProps> = ({
     url?: string;
     responseTime?: number;
     lastSuccessful?: Date | null;
+    dbStatus?: "connected" | "disconnected";
   }>({});
 
   // Use refs for logging control and interval management
@@ -88,6 +89,22 @@ const ServerConnectionMonitor: React.FC<ServerConnectionMonitorProps> = ({
     }
   }, [apiUrl]);
 
+  // Add this utility function for retrying operations with backoff
+  const withRetry = async (
+    fn: () => Promise<any>,
+    retries = 3,
+    baseDelay = 1000
+  ) => {
+    try {
+      return await fn();
+    } catch (error) {
+      if (retries <= 0) throw error;
+      const delay = baseDelay * (1 + 0.2 * Math.random()); // Add jitter
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      return withRetry(fn, retries - 1, baseDelay * 2);
+    }
+  };
+
   // Check server connection status with improved error handling
   const checkServerConnection = useCallback(
     async (forceLog = false) => {
@@ -112,76 +129,96 @@ const ServerConnectionMonitor: React.FC<ServerConnectionMonitorProps> = ({
       setLastChecked(new Date());
 
       try {
-        // Use a shorter timeout for better user experience
-        const startTime = performance.now();
-        const response = await fetch(`${apiUrl}/api/server-info`, {
-          method: "HEAD",
-          headers: { "Content-Type": "application/json" },
-          signal: AbortSignal.timeout(3000),
-          cache: "no-store",
-        });
+        // Try the newer health check endpoint first with retries
+        const checkHealth = async () => {
+          const startTime = performance.now();
 
-        const responseTime = Math.round(performance.now() - startTime);
+          // Use the dedicated health check endpoint
+          const response = await fetch(`${apiUrl}/api/health-check`, {
+            method: "GET",
+            headers: { "Content-Type": "application/json" },
+            signal: AbortSignal.timeout(3000),
+            cache: "no-store",
+          });
 
-        if (response.ok) {
+          // Handle 401/403 responses as endpoint unavailable rather than as errors
+          if (response.status === 401 || response.status === 403) {
+            console.warn(
+              `[CONNECTION] Health check endpoint returned ${response.status}, treating as unavailable`
+            );
+            throw new Error(
+              `Health check endpoint returned ${response.status}`
+            );
+          }
+
+          if (!response.ok) throw new Error(`HTTP status ${response.status}`);
+
+          const responseTime = Math.round(performance.now() - startTime);
+          const data = await response.json();
+
+          return {
+            ok: true,
+            responseTime,
+            data,
+            dbConnected: data.database.connected,
+          };
+        };
+
+        // Try with retries
+        const result = await withRetry(() => checkHealth(), 2, 1000).catch(
+          async () => {
+            // Fallback to the older endpoint if health check fails
+            console.log(
+              "[CONNECTION] Health check failed, trying server-info endpoint"
+            );
+            const startTime = performance.now();
+            const response = await fetch(`${apiUrl}/api/server-info`, {
+              method: "HEAD",
+              headers: { "Content-Type": "application/json" },
+              signal: AbortSignal.timeout(3000),
+              cache: "no-store",
+            });
+
+            const responseTime = Math.round(performance.now() - startTime);
+            return {
+              ok: response.ok,
+              responseTime,
+              fallback: true,
+              dbConnected: true, // Assume connected since we can't check
+            };
+          }
+        );
+
+        if (result.ok) {
           // Connection successful
           consecutiveFailsRef.current = 0;
           lastGoodConnectionRef.current = now;
 
           if (serverStatus !== "connected") {
-            console.log("[CONNECTION] Server connection established");
+            console.log(
+              "[CONNECTION] Server connection established",
+              result.fallback ? "(using fallback endpoint)" : ""
+            );
           }
 
           setServerStatus("connected");
           setServerDetails({
             ...serverDetails,
             url: apiUrl,
-            responseTime,
+            responseTime: result.responseTime,
             lastSuccessful: new Date(),
+            dbStatus: result.dbConnected ? "connected" : "disconnected",
           });
+
           setRetryCount(0);
           shouldLog.current = false;
 
-          // If we were disconnected before, force a page reload to get fresh data
+          // If we were disconnected before and now connected, reload the page
           if (serverStatus === "disconnected" && retryCount > 10) {
             window.location.reload();
           }
         } else {
-          // Try alternate endpoints before marking as disconnected
-          const alternateAvailable = await tryAlternateEndpoints();
-
-          if (alternateAvailable) {
-            // Server is responding to other endpoints, just not the main one
-            // Consider it still connected but log the issue
-            console.log(
-              "[CONNECTION] Main endpoint error, but server is available"
-            );
-            lastGoodConnectionRef.current = now;
-
-            // Only increment fails but don't disconnect yet
-            consecutiveFailsRef.current++;
-
-            if (consecutiveFailsRef.current <= DISCONNECT_THRESHOLD) {
-              // Keep showing as connected if below threshold
-              setServerStatus("connected");
-              setServerDetails({
-                ...serverDetails,
-                url: apiUrl,
-                responseTime: responseTime,
-                lastSuccessful: new Date(),
-              });
-              return;
-            }
-          }
-
-          // Failed beyond threshold, mark as disconnected
-          consecutiveFailsRef.current++;
-          console.error(
-            `[CONNECTION] Server responded with status ${response.status}`
-          );
-          setServerStatus("disconnected");
-          setRetryCount((prev) => prev + 1);
-          shouldLog.current = true;
+          throw new Error("Connection check failed");
         }
       } catch (error) {
         consecutiveFailsRef.current++;
@@ -193,8 +230,8 @@ const ServerConnectionMonitor: React.FC<ServerConnectionMonitorProps> = ({
             "[CONNECTION] Using fallback mode due to persistent connection issues"
           );
           // Don't show as disconnected if we're using fallback mode
-          // This prevents disruption for transient network issues
           if (serverStatus === "connected") {
+            reconnectionAttemptRef.current = false;
             return;
           }
         }
@@ -206,14 +243,7 @@ const ServerConnectionMonitor: React.FC<ServerConnectionMonitorProps> = ({
         reconnectionAttemptRef.current = false;
       }
     },
-    [
-      apiUrl,
-      serverDetails,
-      serverStatus,
-      retryCount,
-      shouldUseFallback,
-      tryAlternateEndpoints,
-    ]
+    [apiUrl, serverDetails, serverStatus, retryCount, shouldUseFallback]
   );
 
   // Setup connection monitoring
