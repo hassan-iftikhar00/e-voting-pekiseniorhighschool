@@ -606,6 +606,24 @@ const VotingAuth: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-indigo-800 flex flex-col items-center justify-center py-12 px-4 sm:px-6 lg:px-8 relative overflow-hidden">
+      {/* Add fixed top left container for logo and school name */}
+      <div className="fixed top-4 left-4 z-50 flex items-center">
+        <div className="h-10 w-10 sm:h-12 sm:w-12 bg-white/10 backdrop-blur-sm rounded-full flex items-center justify-center border-2 border-white/20">
+          {settings.schoolLogo ? (
+            <img
+              src={settings.schoolLogo}
+              alt="School Logo"
+              className="h-6 w-6 sm:h-8 sm:w-8 object-contain"
+            />
+          ) : (
+            <School className="h-6 w-6 sm:h-8 sm:w-8 text-white" />
+          )}
+        </div>
+        <h2 className="ml-2 sm:ml-3 text-sm sm:text-base font-bold text-white truncate max-w-[140px] sm:max-w-[200px]">
+          {settings.schoolName}
+        </h2>
+      </div>
+
       <div
         className={`fixed ${
           isFullScreen ? "top-0" : "top-4"
@@ -663,21 +681,9 @@ const VotingAuth: React.FC = () => {
 
       <div className="max-w-md w-full z-10 backdrop-blur-sm p-4 sm:p-6 md:p-8 rounded-xl">
         <div className="text-center mb-6 sm:mb-8">
-          <div className="mx-auto h-16 w-16 sm:h-20 sm:w-20 md:h-24 md:w-24 mb-4 sm:mb-6 bg-white/10 backdrop-blur-sm rounded-full flex items-center justify-center border-2 border-white/20">
-            {settings.schoolLogo ? (
-              <img
-                src={settings.schoolLogo}
-                alt="School Logo"
-                className="h-10 w-10 sm:h-12 sm:w-12 md:h-14 md:w-14 object-contain"
-              />
-            ) : (
-              <School className="h-10 w-10 sm:h-12 sm:w-12 md:h-14 md:w-14 text-white" />
-            )}
-          </div>
-          <h2 className="text-center text-xl sm:text-2xl md:text-3xl font-extrabold text-white">
-            {settings.schoolName}
-          </h2>
-          <p className="mt-1 sm:mt-2 text-center text-base sm:text-lg md:text-xl text-indigo-200">
+          {/* Remove the logo and school name from here */}
+          {/* Keep only the election title */}
+          <p className="text-center text-xl sm:text-2xl md:text-3xl font-extrabold text-white">
             {settings.electionTitle || "Student Council Election 2025"}
           </p>
         </div>
@@ -686,7 +692,7 @@ const VotingAuth: React.FC = () => {
             <h3 className="text-center text-lg sm:text-xl md:text-2xl font-bold text-white">
               Enter Voter ID
             </h3>
-            <p className="mt-1 sm:mt-2 text-center text-xs sm:text-sm md:text-base text-indigo-200">
+            <p className="mt-1 sm:mt-2 text-center text-xs sm:text-sm md:text-base text-indigo-200 whitespace-nowrap overflow-hidden text-overflow-ellipsis">
               You can only vote once with your unique voter id
             </p>
           </div>

@@ -115,6 +115,28 @@ const ElectionSettingsManager: React.FC = () => {
     return dateStr;
   };
 
+  // Add a function to format time for display in 12-hour format with AM/PM
+  const formatTimeForDisplay = (timeString: string) => {
+    if (!timeString) return "";
+
+    try {
+      // Create a date object with the time
+      const [hours, minutes] = timeString.split(":").map(Number);
+      const date = new Date();
+      date.setHours(hours, minutes, 0);
+
+      // Format to 12-hour clock with AM/PM
+      return date.toLocaleTimeString("en-US", {
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true,
+      });
+    } catch (e) {
+      console.error("Error formatting time:", e);
+      return timeString;
+    }
+  };
+
   // Fetch election settings
   const fetchSettings = async () => {
     if (!canViewSettings) return;
@@ -144,31 +166,22 @@ const ElectionSettingsManager: React.FC = () => {
 
       const data = await response.json();
 
-      // Format dates if needed for the date inputs (YYYY-MM-DD format)
-      const formattedData = {
-        ...data,
-        votingStartDate: convertDateFormat(data.votingStartDate || ""),
-        votingEndDate: convertDateFormat(data.votingEndDate || ""),
-      };
-
-      // Make sure to convert empty strings to appropriate defaults for date fields
+      // Store dates in YYYY-MM-DD format for HTML input elements
+      // Don't convert format here - just use the format received from server
       setSettings({
-        isActive: formattedData.isActive || false,
-        votingStartDate: formattedData.votingStartDate || "",
-        votingEndDate: formattedData.votingEndDate || "",
-        votingStartTime: formattedData.votingStartTime || "08:00",
-        votingEndTime: formattedData.votingEndTime || "16:00",
-        resultsPublished: formattedData.resultsPublished || false,
-        allowVoterRegistration: formattedData.allowVoterRegistration || false,
-        requireEmailVerification:
-          formattedData.requireEmailVerification !== false, // true by default
-        maxVotesPerVoter: formattedData.maxVotesPerVoter || 1,
-        systemName:
-          formattedData.systemName || "Peki Senior High School Elections",
-        systemLogo: formattedData.systemLogo || "",
-        electionTitle:
-          formattedData.electionTitle || "Student Council Election 2025",
-        schoolName: formattedData.schoolName || "Peki Senior High School",
+        isActive: data.isActive || false,
+        votingStartDate: data.votingStartDate || "",
+        votingEndDate: data.votingEndDate || "",
+        votingStartTime: data.votingStartTime?.substring(0, 5) || "08:00",
+        votingEndTime: data.votingEndTime?.substring(0, 5) || "16:00",
+        resultsPublished: data.resultsPublished || false,
+        allowVoterRegistration: data.allowVoterRegistration || false,
+        requireEmailVerification: data.requireEmailVerification !== false, // true by default
+        maxVotesPerVoter: data.maxVotesPerVoter || 1,
+        systemName: data.systemName || "Peki Senior High School Elections",
+        systemLogo: data.systemLogo || "",
+        electionTitle: data.electionTitle || "Student Council Election 2025",
+        schoolName: data.schoolName || "Peki Senior High School",
       });
     } catch (error: any) {
       console.error("Error fetching settings:", error);
@@ -260,6 +273,26 @@ const ElectionSettingsManager: React.FC = () => {
         Authorization: token ? `Bearer ${token}` : "",
       };
 
+      // Ensure times include seconds for consistency
+      const settingsForApi = {
+        ...settings,
+        // Ensure times include seconds for consistency
+        votingStartTime: settings.votingStartTime.includes(":")
+          ? settings.votingStartTime.length === 5
+            ? settings.votingStartTime + ":00"
+            : settings.votingStartTime
+          : settings.votingStartTime + ":00",
+        votingEndTime: settings.votingEndTime.includes(":")
+          ? settings.votingEndTime.length === 5
+            ? settings.votingEndTime + ":00"
+            : settings.votingEndTime
+          : settings.votingEndTime + ":00",
+        companyName: settings.systemName, // Map systemName to companyName
+        schoolName: settings.schoolName, // Send schoolName separately
+        companyLogo: settings.companyLogo, // Send companyLogo separately
+        schoolLogo: settings.schoolLogo, // Send schoolLogo separately
+      };
+
       const response = await fetch(
         `${
           import.meta.env.VITE_API_URL || "http://localhost:5000"
@@ -267,13 +300,7 @@ const ElectionSettingsManager: React.FC = () => {
         {
           method: "PUT",
           headers,
-          body: JSON.stringify({
-            ...settings,
-            companyName: settings.systemName, // Map systemName to companyName
-            schoolName: settings.schoolName, // Send schoolName separately
-            companyLogo: settings.companyLogo, // Send companyLogo separately
-            schoolLogo: settings.schoolLogo, // Send schoolLogo separately
-          }),
+          body: JSON.stringify(settingsForApi),
         }
       );
 
@@ -286,6 +313,9 @@ const ElectionSettingsManager: React.FC = () => {
         type: "success",
         message: "Election settings updated successfully",
       });
+
+      // After successful update, refresh the data
+      fetchSettings();
 
       setIsEditing(false);
     } catch (error: any) {
@@ -1106,6 +1136,11 @@ const ElectionSettingsManager: React.FC = () => {
                   onChange={handleInputChange}
                   disabled={!isEditing}
                 />
+                {settings.votingStartDate && (
+                  <p className="mt-1 text-xs text-gray-500">
+                    {formatDate(settings.votingStartDate)}
+                  </p>
+                )}
               </div>
 
               <div>
@@ -1120,6 +1155,11 @@ const ElectionSettingsManager: React.FC = () => {
                   onChange={handleInputChange}
                   disabled={!isEditing}
                 />
+                {settings.votingEndDate && (
+                  <p className="mt-1 text-xs text-gray-500">
+                    {formatDate(settings.votingEndDate)}
+                  </p>
+                )}
               </div>
 
               <div>
@@ -1134,6 +1174,11 @@ const ElectionSettingsManager: React.FC = () => {
                   onChange={handleInputChange}
                   disabled={!isEditing}
                 />
+                {settings.votingStartTime && (
+                  <p className="mt-1 text-xs text-gray-500">
+                    {formatTimeForDisplay(settings.votingStartTime)}
+                  </p>
+                )}
               </div>
 
               <div>
@@ -1148,6 +1193,11 @@ const ElectionSettingsManager: React.FC = () => {
                   onChange={handleInputChange}
                   disabled={!isEditing}
                 />
+                {settings.votingEndTime && (
+                  <p className="mt-1 text-xs text-gray-500">
+                    {formatTimeForDisplay(settings.votingEndTime)}
+                  </p>
+                )}
               </div>
 
               <div>
