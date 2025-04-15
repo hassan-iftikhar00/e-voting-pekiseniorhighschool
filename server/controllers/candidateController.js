@@ -1,7 +1,69 @@
 import Candidate from "../models/Candidate.js";
 import Position from "../models/Position.js";
 import Election from "../models/Election.js";
-import Voter from "../models/Voter.js"; // Ensure the Voter model is imported
+import Voter from "../models/Voter.js";
+
+// Simple in-memory cache implementation
+const cache = {
+  data: new Map(),
+  timeouts: new Map(),
+
+  set(key, value, ttlMs = 5 * 60 * 1000) {
+    // 5 minute default TTL
+    // Clear existing timeout if present
+    if (this.timeouts.has(key)) {
+      clearTimeout(this.timeouts.get(key));
+    }
+
+    // Set cache data
+    this.data.set(key, {
+      value,
+      timestamp: Date.now(),
+    });
+
+    // Set expiration
+    const timeout = setTimeout(() => {
+      this.data.delete(key);
+      this.timeouts.delete(key);
+    }, ttlMs);
+
+    this.timeouts.set(key, timeout);
+  },
+
+  get(key, maxAge = null) {
+    const entry = this.data.get(key);
+    if (!entry) return null;
+
+    // Check if cache entry is still valid based on maxAge
+    if (maxAge && Date.now() - entry.timestamp > maxAge) {
+      return null;
+    }
+
+    return entry.value;
+  },
+
+  invalidate(keyPattern) {
+    // Delete all cache entries that include keyPattern
+    for (const key of this.data.keys()) {
+      if (key.includes(keyPattern)) {
+        if (this.timeouts.has(key)) {
+          clearTimeout(this.timeouts.get(key));
+          this.timeouts.delete(key);
+        }
+        this.data.delete(key);
+      }
+    }
+  },
+};
+
+// Helper function to escape special regex characters
+function escapeRegExp(string) {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Cache keys
+const POSITION_CACHE_KEY = "positions";
+const CANDIDATE_CACHE_PREFIX = "candidates:voter:";
 
 // Get all candidates
 export const getAllCandidates = async (req, res) => {
@@ -15,6 +77,8 @@ export const getAllCandidates = async (req, res) => {
       electionId: currentElection._id,
     });
 
+    // Set cache headers for browser caching
+    res.set("Cache-Control", "private, max-age=60"); // 1 minute cache
     res.status(200).json(candidates);
   } catch (error) {
     res.status(500).json({ message: "Server error", error: error.message });
@@ -68,6 +132,11 @@ export const createCandidate = async (req, res) => {
     });
 
     await candidate.save();
+
+    // Invalidate caches when a candidate is added
+    cache.invalidate(POSITION_CACHE_KEY);
+    cache.invalidate(CANDIDATE_CACHE_PREFIX);
+
     res.status(201).json(candidate);
   } catch (error) {
     res.status(500).json({ message: "Server error", error: error.message });
@@ -121,6 +190,11 @@ export const updateCandidate = async (req, res) => {
       voterCategory !== undefined ? voterCategory : candidate.voterCategory;
 
     await candidate.save();
+
+    // Invalidate caches when a candidate is updated
+    cache.invalidate(POSITION_CACHE_KEY);
+    cache.invalidate(CANDIDATE_CACHE_PREFIX);
+
     res.status(200).json(candidate);
   } catch (error) {
     res.status(500).json({ message: "Server error", error: error.message });
@@ -139,6 +213,11 @@ export const deleteCandidate = async (req, res) => {
     }
 
     await Candidate.findByIdAndDelete(id);
+
+    // Invalidate caches when a candidate is deleted
+    cache.invalidate(POSITION_CACHE_KEY);
+    cache.invalidate(CANDIDATE_CACHE_PREFIX);
+
     res.status(200).json({ message: "Candidate deleted successfully" });
   } catch (error) {
     res.status(500).json({ message: "Server error", error: error.message });
@@ -226,6 +305,8 @@ export const getCandidatesByPosition = async (req, res) => {
     );
 
     // Return the actual data from database - no fallback data
+    // Add cache headers for the response
+    res.set("Cache-Control", "private, max-age=300"); // 5 minutes
     return res.status(200).json(candidatesByPosition);
   } catch (error) {
     console.error("Error in getCandidatesByPosition:", error);
@@ -237,18 +318,33 @@ export const getCandidatesByPosition = async (req, res) => {
   }
 };
 
-// Get candidates for voter
+// Get candidates for voter - OPTIMIZED VERSION
 export const getCandidatesForVoter = async (req, res) => {
   try {
     const { voterId } = req.query;
+    const bypassCache = req.query.refresh === "true";
 
     if (!voterId) {
       return res.status(400).json({ message: "Voter ID is required" });
     }
 
+    // Check cache first unless bypassing
+    const cacheKey = `${CANDIDATE_CACHE_PREFIX}${voterId}`;
+    if (!bypassCache) {
+      const cachedData = cache.get(cacheKey);
+      if (cachedData) {
+        // Set cache headers
+        res.set({
+          "Cache-Control": "private, max-age=300", // 5 minutes
+          "X-Cache": "HIT",
+        });
+        return res.status(200).json(cachedData);
+      }
+    }
+
+    // Cache miss, fetch data from database
     const voter = await Voter.findOne({ voterId });
     if (!voter) {
-      console.error(`Voter with ID ${voterId} not found.`);
       return res.status(404).json({ message: "Voter not found" });
     }
 
@@ -276,9 +372,16 @@ export const getCandidatesForVoter = async (req, res) => {
       house: voterHouse,
     });
 
-    // Get all positions in a single query
-    const positions = await Position.find({ isActive: true });
-    console.log(`Found ${positions.length} active positions`);
+    // Get positions, using cache if available
+    let positions;
+    const positionsCache = cache.get(POSITION_CACHE_KEY);
+    if (positionsCache) {
+      positions = positionsCache;
+    } else {
+      positions = await Position.find({ isActive: true }).lean();
+      // Cache the positions for future requests
+      cache.set(POSITION_CACHE_KEY, positions);
+    }
 
     // Create a map of position IDs to position names for quick lookup
     const positionMap = {};
@@ -286,109 +389,80 @@ export const getCandidatesForVoter = async (req, res) => {
       const positionName =
         position.title || position.name || `Position ${position._id}`;
       positionMap[position._id.toString()] = positionName;
-      console.log(`Mapped position: ${position._id} to ${positionName}`);
     });
 
-    // Fetch candidates based on voter category using original case format AND case-insensitive regex
-    const candidates = await Candidate.find({
+    // Build an optimized query - reducing the number of $or conditions
+    const query = {
       electionId: voter.electionId,
+      isActive: true, // Only get active candidates
       $or: [
         { "voterCategory.type": "all" },
-        // Match exact format
-        {
-          "voterCategory.type": "class",
-          "voterCategory.values": { $in: [voterClass] },
-        },
-        {
-          "voterCategory.type": "year",
-          "voterCategory.values": { $in: [voterYear] },
-        },
-        {
-          "voterCategory.type": "house",
-          "voterCategory.values": { $in: [voterHouse] },
-        },
-        // Also try with regex for case-insensitive matching
-        {
-          "voterCategory.type": "class",
-          "voterCategory.values": {
-            $elemMatch: {
-              $regex: new RegExp(`^${escapeRegExp(normalizedClass)}$`, "i"),
-            },
-          },
-        },
-        {
-          "voterCategory.type": "year",
-          "voterCategory.values": {
-            $elemMatch: {
-              $regex: new RegExp(`^${escapeRegExp(normalizedYear)}$`, "i"),
-            },
-          },
-        },
-        {
-          "voterCategory.type": "house",
-          "voterCategory.values": {
-            $elemMatch: {
-              $regex: new RegExp(`^${escapeRegExp(normalizedHouse)}$`, "i"),
-            },
-          },
-        },
-        // Include candidates with missing voter category
         { voterCategory: { $exists: false } },
         { "voterCategory.type": { $exists: false } },
         { "voterCategory.values": { $exists: false } },
         { "voterCategory.values": { $size: 0 } },
       ],
-    }).lean();
+    };
 
-    // Helper function to escape special regex characters
-    function escapeRegExp(string) {
-      return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    // Add class matching
+    if (voterClass) {
+      query.$or.push({
+        "voterCategory.type": "class",
+        "voterCategory.values": {
+          $elemMatch: {
+            $regex: new RegExp(`^${escapeRegExp(voterClass)}$`, "i"),
+          },
+        },
+      });
     }
 
-    // Log candidates for debugging
-    console.log(`Candidates fetched: ${candidates.length}`);
-    candidates.forEach((candidate) => {
-      console.log(
-        `Candidate ID: ${candidate._id}, Name: ${candidate.name}, PositionId: ${
-          candidate.positionId
-        }, VoterCategory: ${JSON.stringify(candidate.voterCategory)}`
-      );
-    });
+    // Add year matching
+    if (voterYear) {
+      query.$or.push({
+        "voterCategory.type": "year",
+        "voterCategory.values": {
+          $elemMatch: {
+            $regex: new RegExp(`^${escapeRegExp(voterYear)}$`, "i"),
+          },
+        },
+      });
+    }
 
-    console.log(
-      `Filtering candidates for voter ID ${voterId} with attributes:`,
-      {
-        class: voterClass,
-        year: voterYear,
-        house: voterHouse,
-      }
-    );
+    // Add house matching
+    if (voterHouse) {
+      query.$or.push({
+        "voterCategory.type": "house",
+        "voterCategory.values": {
+          $elemMatch: {
+            $regex: new RegExp(`^${escapeRegExp(voterHouse)}$`, "i"),
+          },
+        },
+      });
+    }
+
+    // Fetch candidates with optimized fields projection
+    const candidates = await Candidate.find(query)
+      .select("_id name image biography positionId")
+      .lean();
 
     if (!candidates.length) {
-      console.error(`No candidates found for voter ID ${voterId}.`);
       return res.status(404).json({ message: "No candidates found" });
     }
 
-    console.log(
-      `Found ${candidates.length} candidates for voter ID ${voterId}.`
-    );
+    // Group candidates by position title - optimized transformation
+    const candidatesByPosition = {};
 
-    // Group candidates by position title instead of position ID
-    const candidatesByPosition = candidates.reduce((acc, candidate) => {
-      // Use position title from the position map instead of the ObjectId
+    for (const candidate of candidates) {
       const positionId = candidate.positionId
         ? candidate.positionId.toString()
         : null;
-      const positionName =
-        positionId && positionMap[positionId]
-          ? positionMap[positionId]
-          : "General Position";
+      const positionName = positionMap[positionId] || "General Position";
 
-      if (!acc[positionName]) {
-        acc[positionName] = [];
+      if (!candidatesByPosition[positionName]) {
+        candidatesByPosition[positionName] = [];
       }
 
-      acc[positionName].push({
+      candidatesByPosition[positionName].push({
         id: candidate._id,
         name: candidate.name,
         imageUrl: candidate.image || null,
@@ -396,8 +470,16 @@ export const getCandidatesForVoter = async (req, res) => {
         position: positionName,
         positionId: candidate.positionId,
       });
-      return acc;
-    }, {});
+    }
+
+    // Cache the results
+    cache.set(cacheKey, candidatesByPosition);
+
+    // Set cache headers
+    res.set({
+      "Cache-Control": "private, max-age=300", // 5 minutes
+      "X-Cache": "MISS",
+    });
 
     res.status(200).json(candidatesByPosition);
   } catch (error) {

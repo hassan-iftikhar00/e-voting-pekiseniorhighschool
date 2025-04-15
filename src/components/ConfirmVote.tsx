@@ -24,6 +24,13 @@ interface Candidate {
   positionId?: string;
 }
 
+interface Position {
+  _id: string;
+  title: string;
+  order: number;
+  // Other position fields...
+}
+
 interface ConfirmVoteState {
   selectedCandidates: Record<string, Candidate>;
   noneSelected: Record<string, boolean>;
@@ -36,10 +43,13 @@ const ConfirmVote: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState(false);
-  const [countdown, setCountdown] = useState(5);
   const [voteToken, setVoteToken] = useState<string | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [positions, setPositions] = useState<Position[]>([]);
+  const [positionTitleToOrderMap, setPositionTitleToOrderMap] = useState<
+    Record<string, number>
+  >({});
   const topRef = useRef<HTMLDivElement>(null);
 
   const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:5000";
@@ -49,6 +59,37 @@ const ConfirmVote: React.FC = () => {
       selectedCandidates: {},
       noneSelected: {},
     };
+
+  // Fetch positions to get their order
+  useEffect(() => {
+    const fetchPositions = async () => {
+      try {
+        // Get authentication token (if needed)
+        const token = localStorage.getItem("token");
+        const headers = {
+          "Content-Type": "application/json",
+          ...(token && { Authorization: `Bearer ${token}` }),
+        };
+
+        const response = await axios.get(`${apiUrl}/api/positions`, {
+          headers,
+        });
+        const positionsData = response.data;
+        setPositions(positionsData);
+
+        // Create a map of position titles to their order values
+        const orderMap: Record<string, number> = {};
+        positionsData.forEach((position: Position) => {
+          orderMap[position.title] = position.order || 0;
+        });
+        setPositionTitleToOrderMap(orderMap);
+      } catch (error) {
+        console.error("Error fetching positions:", error);
+      }
+    };
+
+    fetchPositions();
+  }, [apiUrl]);
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -72,16 +113,6 @@ const ConfirmVote: React.FC = () => {
 
     return () => clearInterval(timeInterval);
   }, [user, navigate, state]);
-
-  useEffect(() => {
-    let timer: NodeJS.Timeout;
-    if (success && countdown > 0) {
-      timer = setTimeout(() => setCountdown((prev) => prev - 1), 1000);
-      return () => clearTimeout(timer);
-    } else if (success && countdown === 0) {
-      navigate("/vote-success", { state: { voteToken } });
-    }
-  }, [success, countdown, navigate, voteToken]);
 
   useEffect(() => {
     if (success) {
@@ -179,14 +210,21 @@ const ConfirmVote: React.FC = () => {
     });
   };
 
-  const allPositions = new Set([
+  const allPositionsSet = new Set([
     ...Object.keys(selectedCandidates),
     ...Object.keys(noneSelected).filter((pos) => noneSelected[pos]),
   ]);
 
+  // Convert Set to Array and sort by order value
+  const sortedPositions = Array.from(allPositionsSet).sort((a, b) => {
+    const orderA = positionTitleToOrderMap[a] || 0;
+    const orderB = positionTitleToOrderMap[b] || 0;
+    return orderA - orderB;
+  });
+
   const noneSelectedCount = Object.values(noneSelected).filter(Boolean).length;
 
-  if (!user || allPositions.size === 0) {
+  if (!user || allPositionsSet.size === 0) {
     navigate("/candidates");
     return null;
   }
@@ -201,9 +239,11 @@ const ConfirmVote: React.FC = () => {
           <h1 className="text-2xl font-bold font-sans tracking-wide">
             Student Council Election 2025
           </h1>
-          <p className="text-indigo-100 text-sm font-sans font-light">
-            Confirm your selections
-          </p>
+          {!success && (
+            <p className="text-indigo-100 text-sm font-sans font-light">
+              Confirm your selections
+            </p>
+          )}
         </div>
       </div>
 
@@ -282,20 +322,22 @@ const ConfirmVote: React.FC = () => {
       <div className="pt-20 pb-12 relative z-10 flex-1 flex items-center justify-center">
         <div className="max-w-3xl w-full px-4 sm:px-6 lg:px-8">
           <div className="bg-white shadow-lg rounded-lg overflow-hidden">
-            <div className="bg-gradient-to-r from-indigo-100 to-indigo-50 p-6 flex justify-between items-center">
-              <div>
-                <h2 className="text-2xl font-extrabold text-indigo-800 font-sans tracking-wide">
-                  Review Your Selections
-                </h2>
-                <p className="text-indigo-600 font-sans text-sm mt-1">
-                  Please verify your choices before submitting your vote
-                </p>
+            {!success && (
+              <div className="bg-gradient-to-r from-indigo-100 to-indigo-50 p-6 flex justify-between items-center">
+                <div>
+                  <h2 className="text-2xl font-extrabold text-indigo-800 font-sans tracking-wide">
+                    Review Your Selections
+                  </h2>
+                  <p className="text-indigo-600 font-sans text-sm mt-1">
+                    Please verify your choices before submitting your vote
+                  </p>
+                </div>
+                <div className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-indigo-100 text-indigo-800 whitespace-nowrap">
+                  <Clock className="h-4 w-4 mr-1" />
+                  {currentTime.toLocaleTimeString()}
+                </div>
               </div>
-              <div className="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-indigo-100 text-indigo-800 whitespace-nowrap">
-                <Clock className="h-4 w-4 mr-1" />
-                {currentTime.toLocaleTimeString()}
-              </div>
-            </div>
+            )}
 
             <div className="p-6">
               {error && (
@@ -328,9 +370,12 @@ const ConfirmVote: React.FC = () => {
                       {voteToken}
                     </span>
                   </p>
-                  <p className="text-sm text-gray-500">
-                    Redirecting in {countdown} seconds...
-                  </p>
+                  <button
+                    onClick={() => navigate("/")}
+                    className="mt-4 inline-flex items-center px-4 py-2 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                  >
+                    Return to Home
+                  </button>
                 </div>
               ) : (
                 <>
@@ -351,7 +396,7 @@ const ConfirmVote: React.FC = () => {
                   )}
 
                   <div className="space-y-4">
-                    {Array.from(allPositions).map((position) => (
+                    {sortedPositions.map((position) => (
                       <div
                         key={position}
                         className="bg-gray-50 rounded-lg p-4 transition-all duration-300 hover:shadow-md border border-gray-100"
@@ -450,12 +495,14 @@ const ConfirmVote: React.FC = () => {
             )}
           </div>
 
-          <div className="text-center text-sm text-gray-500 font-sans font-light mt-6 bg-white p-4 rounded-lg shadow-sm border border-gray-100">
-            <p>
-              Your vote is confidential and secure. Once submitted, it cannot be
-              changed.
-            </p>
-          </div>
+          {!success && (
+            <div className="text-center text-sm text-gray-500 font-sans font-light mt-6 bg-white p-4 rounded-lg shadow-sm border border-gray-100">
+              <p>
+                Your vote is confidential and secure. Once submitted, it cannot
+                be changed.
+              </p>
+            </div>
+          )}
         </div>
       </div>
     </div>

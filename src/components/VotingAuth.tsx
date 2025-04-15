@@ -23,6 +23,7 @@ import { useSettings } from "../context/SettingsContext";
 import { motion, AnimatePresence } from "framer-motion";
 import { Chart as ChartJS, ArcElement, Tooltip, Legend } from "chart.js";
 import { Doughnut } from "react-chartjs-2";
+import VoteSuccess from "./VoteSuccess";
 
 ChartJS.register(ArcElement, Tooltip, Legend);
 
@@ -94,6 +95,12 @@ const VotingAuth: React.FC = () => {
   const [electionStatus, setElectionStatus] = useState<
     "not-started" | "active" | "ended"
   >("not-started");
+
+  const [voterId, setVoterId] = useState("");
+  const [errorDetails, setErrorDetails] = useState<string | null>(null);
+  // Add new state for the VoteSuccess popup
+  const [showVoteSuccess, setShowVoteSuccess] = useState(false);
+  const [votedVoterData, setVotedVoterData] = useState<any>(null);
 
   const fetchCurrentElection = async () => {
     try {
@@ -384,7 +391,24 @@ const VotingAuth: React.FC = () => {
       return null;
     } catch (error) {
       console.error("Error validating voter:", error);
-      return null;
+
+      // Check for "already voted" error response
+      if (axios.isAxiosError(error) && error.response) {
+        // If there's an error response with a specific code for already voted
+        if (
+          error.response.data.errorCode === "ALREADY_VOTED" &&
+          error.response.data.voter
+        ) {
+          // Return the voter data with a flag indicating they've already voted
+          return {
+            ...error.response.data.voter,
+            hasVoted: true,
+          };
+        }
+      }
+
+      // For other errors, throw to be caught by handleSubmit
+      throw error;
     }
   };
 
@@ -468,6 +492,20 @@ const VotingAuth: React.FC = () => {
           voterId: voter.voterId,
           votedAt: votedAtDate,
         });
+
+        // Store voter data for VoteSuccess component
+        setVotedVoterData({
+          name: voter.name,
+          voterId: voter.voterId,
+          votedAt: voter.votedAt,
+          voteToken: voter.voteToken || "TOKEN_NOT_AVAILABLE",
+        });
+
+        // Set timer to show VoteSuccess popup after 5 seconds
+        setTimeout(() => {
+          setShowVoteSuccess(true);
+        }, 5000);
+
         return;
       }
 
@@ -604,6 +642,12 @@ const VotingAuth: React.FC = () => {
     );
   };
 
+  // Add function to close the VoteSuccess popup
+  const handleCloseVoteSuccess = () => {
+    setShowVoteSuccess(false);
+    setVotedVoterData(null);
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-indigo-800 flex flex-col items-center justify-center py-12 px-4 sm:px-6 lg:px-8 relative overflow-hidden">
       {/* Add fixed top left container for logo and school name */}
@@ -619,19 +663,21 @@ const VotingAuth: React.FC = () => {
             <School className="h-6 w-6 sm:h-8 sm:w-8 text-white" />
           )}
         </div>
-        <h2 className="ml-2 sm:ml-3 text-sm sm:text-base font-bold text-white truncate max-w-[140px] sm:max-w-[200px]">
-          {settings.schoolName}
+        <h2 className="ml-2 sm:ml-3 text-sm sm:text-base font-bold text-white whitespace-nowrap">
+          {settings.schoolName ||
+            settings.systemName ||
+            "Peki Senior High School"}
         </h2>
       </div>
 
       <div
         className={`fixed ${
-          isFullScreen ? "top-0" : "top-4"
+          isFullScreen ? "top-0" : "top-20 sm:top-4"
         } left-1/2 sm:left-auto sm:right-4 transform -translate-x-1/2 sm:translate-x-0 z-50 flex flex-col sm:flex-row items-center space-y-2 sm:space-y-0 sm:space-x-2`}
       >
-        <div className="bg-white/10 backdrop-blur-sm rounded-lg px-3 py-2 sm:px-6 sm:py-3 text-white border border-white/20 flex items-center whitespace-nowrap">
+        <div className="bg-white/10 backdrop-blur-sm rounded-lg px-3 py-2 sm:px-6 sm:py-3 text-white border border-white/20 flex items-center whitespace-nowrap w-full sm:w-auto min-w-[200px]">
           <Calendar className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2 flex-shrink-0" />
-          <span className="text-xs sm:text-sm font-bold truncate max-w-[160px] sm:max-w-none">
+          <span className="text-xs sm:text-sm font-bold">
             {currentElection
               ? `Election Date: ${formatElectionDate(
                   currentElection.endDate || currentElection.date
@@ -641,7 +687,7 @@ const VotingAuth: React.FC = () => {
         </div>
 
         <div
-          className={`rounded-lg px-3 py-2 sm:px-6 sm:py-3 text-xs sm:text-sm font-medium whitespace-nowrap ${
+          className={`rounded-lg px-3 py-2 sm:px-6 sm:py-3 text-xs sm:text-sm font-medium w-full sm:w-auto min-w-[220px] ${
             electionStatus === "active"
               ? "bg-green-500 text-white"
               : electionStatus === "ended"
@@ -649,9 +695,9 @@ const VotingAuth: React.FC = () => {
               : "bg-yellow-300 text-black"
           }`}
         >
-          <div className="flex items-center justify-center text-center">
+          <div className="flex items-center justify-center whitespace-nowrap">
             <Clock className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2 flex-shrink-0" />
-            <span className="truncate max-w-[160px] sm:max-w-none">
+            <span>
               {electionStatus === "active" ? (
                 <>Election in progress • Ends in: {timeRemaining}</>
               ) : electionStatus === "ended" ? (
@@ -683,7 +729,7 @@ const VotingAuth: React.FC = () => {
         <div className="text-center mb-6 sm:mb-8">
           {/* Remove the logo and school name from here */}
           {/* Keep only the election title */}
-          <p className="text-center text-xl sm:text-2xl md:text-3xl font-extrabold text-white">
+          <p className="text-center mt-10 text-lg sm:text-xl md:text-2xl font-extrabold text-white">
             {settings.electionTitle || "Student Council Election 2025"}
           </p>
         </div>
@@ -852,54 +898,80 @@ const VotingAuth: React.FC = () => {
           showMonitor ? "flex" : "hidden"
         } flex-col h-screen sm:h-auto`}
       >
-        <div className="p-3 border-b border-gray-200 flex flex-col sm:flex-row items-start sm:items-center sm:justify-between space-y-2 sm:space-y-0">
-          <div className="flex items-center space-x-4">
-            <Activity className="h-5 w-5 text-indigo-600 mr-2" />
-            <h3 className="text-lg font-semibold text-gray-900">
-              Polling Dashboard
-            </h3>
-          </div>
+        <div className="p-3 border-b border-gray-200 relative">
+          <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start">
+            <div className="flex justify-between items-center mb-2 sm:mb-0">
+              <div className="flex items-center space-x-4">
+                <Activity className="h-5 w-5 text-indigo-600 mr-2" />
+                <h3 className="text-lg font-semibold text-gray-900 flex flex-col sm:flex-row sm:items-center">
+                  {settings.schoolName && (
+                    <span className="inline-block sm:mr-2">
+                      {settings.schoolName || "Peki Senior High School"}{" "}
+                      <span className="mx-1 text-gray-400 hidden sm:inline">
+                        |
+                      </span>
+                    </span>
+                  )}
+                  <span className="text-xs md:text-sm lg:text-base mt-1 sm:mt-0">
+                    Polling Dashboard
+                  </span>
+                </h3>
+              </div>
 
-          <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-            <div className="flex items-center bg-indigo-50 rounded-lg px-2 py-1 text-xs font-medium text-indigo-700">
-              <Calendar className="h-3 w-3 mr-1 flex-shrink-0" />
-              <span className="truncate">
-                {!currentElection
-                  ? "Loading..."
-                  : formatElectionDate(
-                      currentElection.endDate || currentElection.date
-                    )}
-              </span>
+              <button
+                onClick={() => {
+                  setShowMonitor(false);
+                  setIsFullScreen(false);
+                }}
+                className="p-1 hover:bg-gray-100 rounded-full transition-colors sm:hidden"
+              >
+                <X className="h-5 w-5 text-gray-500" />
+              </button>
             </div>
 
-            <div
-              className={`flex items-center ${
-                electionStatus === "active"
-                  ? "bg-green-100 text-green-800"
-                  : electionStatus === "ended"
-                  ? "bg-gray-100 text-gray-800"
-                  : "bg-yellow-100 text-yellow-800"
-              } rounded-lg px-2 py-1 text-xs font-medium`}
-            >
-              <Clock className="h-3 w-3 mr-1 flex-shrink-0" />
-              <span className="truncate">
-                {electionStatus === "active"
-                  ? `Ends in: ${timeRemaining}`
-                  : electionStatus === "ended"
-                  ? "Election has ended"
-                  : `Starts in: ${timeRemaining}`}
-              </span>
-            </div>
+            <div className="flex flex-col space-y-2 sm:flex-row sm:space-y-0 sm:space-x-2 sm:items-center mt-6 sm:mt-0">
+              <div className="bg-indigo-100 backdrop-blur-sm rounded-lg px-3 py-2 border border-indigo-200 flex items-center">
+                <Calendar className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2 flex-shrink-0 text-indigo-600" />
+                <span className="text-xs sm:text-sm font-bold text-indigo-700">
+                  {currentElection
+                    ? `Election Date: ${formatElectionDate(
+                        currentElection.endDate || currentElection.date
+                      )}`
+                    : "Date unavailable"}
+                </span>
+              </div>
 
-            <button
-              onClick={() => {
-                setShowMonitor(false);
-                setIsFullScreen(false);
-              }}
-              className="p-1 hover:bg-gray-100 rounded-full transition-colors ml-auto sm:ml-2"
-            >
-              <X className="h-5 w-5 text-gray-500" />
-            </button>
+              <div
+                className={`rounded-lg px-3 py-2 text-xs sm:text-sm font-medium flex items-center ${
+                  electionStatus === "active"
+                    ? "bg-green-500 text-white"
+                    : electionStatus === "ended"
+                    ? "bg-gray-500 text-white"
+                    : "bg-yellow-300 text-black"
+                }`}
+              >
+                <Clock className="h-3 w-3 sm:h-4 sm:w-4 mr-1 sm:mr-2 flex-shrink-0" />
+                <span>
+                  {electionStatus === "active" ? (
+                    <>Election in progress • Ends in: {timeRemaining}</>
+                  ) : electionStatus === "ended" ? (
+                    <>Election has ended</>
+                  ) : (
+                    <>Election starts in: {timeRemaining}</>
+                  )}
+                </span>
+              </div>
+
+              <button
+                onClick={() => {
+                  setShowMonitor(false);
+                  setIsFullScreen(false);
+                }}
+                className="hidden sm:flex p-1 hover:bg-gray-100 rounded-full transition-colors items-center justify-center"
+              >
+                <X className="h-5 w-5 text-gray-500" />
+              </button>
+            </div>
           </div>
         </div>
 
@@ -1126,6 +1198,21 @@ const VotingAuth: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Add VoteSuccess popup */}
+      {showVoteSuccess && votedVoterData && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50 p-4 sm:p-0">
+          <div className="relative bg-white rounded-lg w-full sm:max-w-md max-h-[80vh] sm:max-h-[90vh] overflow-auto">
+            <button
+              onClick={handleCloseVoteSuccess}
+              className="absolute top-2 right-2 text-gray-500 hover:text-gray-700 p-2 z-10"
+            >
+              <X className="h-5 w-5 sm:h-6 sm:w-6" />
+            </button>
+            <VoteSuccess voter={votedVoterData} isPopup={true} />
+          </div>
+        </div>
+      )}
 
       {/* <div className="text-center text-xs text-white py-2 bg-transparent">
         <p>Monitored by Secured Smart System (Contact +233 24 333 9546)</p>

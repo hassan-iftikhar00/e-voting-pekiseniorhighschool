@@ -8,7 +8,7 @@ const SettingSchema = new mongoose.Schema(
     },
     electionTitle: {
       type: String,
-      default: "Student Council Election",
+      default: "Student Council Election 2025",
     },
     votingStartDate: {
       type: String,

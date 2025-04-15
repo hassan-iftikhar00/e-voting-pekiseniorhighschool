@@ -48,10 +48,13 @@ const Candidates: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [candidatesCacheTime, setCandidatesCacheTime] = useState<number>(0);
+  const [isBackgroundFetching, setIsBackgroundFetching] = useState(false);
   const navigate = useNavigate();
   const { user } = useUser();
   const topRef = useRef<HTMLDivElement>(null);
   const apiUrl = import.meta.env.VITE_API_URL || "http://localhost:5000";
+  const fetchRequestRef = useRef<AbortController | null>(null);
+  const CACHE_EXPIRY_MS = 5 * 60 * 1000; // 5 minutes
 
   useEffect(() => {
     if (!user) {
@@ -66,54 +69,59 @@ const Candidates: React.FC = () => {
       return;
     }
 
-    const fetchCandidatesData = async () => {
-      setLoading(true);
-      try {
-        const response = await axios.get(
-          `${apiUrl}/api/candidates/for-voter?voterId=${voterId}`,
-          {
-            timeout: 15000,
-            headers: {
-              "Cache-Control": "no-cache",
-              Pragma: "no-cache",
-            },
-          }
-        );
-
-        setSelectedCandidateIds({});
-        setNoneSelected({});
-        setCandidatesByPosition(response.data);
-        setPositions(Object.keys(response.data));
-        setLastUpdated(new Date());
-      } catch (error) {
-        setError("Failed to load candidates. Please try again.");
-      } finally {
-        setLoading(false);
+    const fetchCandidatesData = async (showLoading = true, useCache = true) => {
+      // Abort any in-flight requests
+      if (fetchRequestRef.current) {
+        fetchRequestRef.current.abort();
       }
-    };
 
-    fetchCandidatesData();
-  }, [user, navigate, apiUrl]);
+      // Create new abort controller
+      fetchRequestRef.current = new AbortController();
 
-  useEffect(() => {
-    const fetchCandidatesData = async () => {
-      setLoading(true);
+      if (showLoading) {
+        setLoading(true);
+      } else {
+        setIsBackgroundFetching(true);
+      }
+
       try {
-        const voterId = localStorage.getItem("voterId");
-        if (!voterId) {
-          setError("Please enter your Voter ID to view candidates.");
-          setLoading(false);
-          return;
+        // Check for cached data if useCache is true
+        if (useCache) {
+          const cachedData = localStorage.getItem("candidatesData");
+          const cacheTimestamp = Number(
+            localStorage.getItem("candidatesCacheTime") || "0"
+          );
+          const now = Date.now();
+
+          // If we have valid, non-expired cached data
+          if (cachedData && now - cacheTimestamp < CACHE_EXPIRY_MS) {
+            const parsedData = JSON.parse(cachedData);
+            if (parsedData && Object.keys(parsedData).length > 0) {
+              setCandidatesByPosition(parsedData);
+              setPositions(Object.keys(parsedData));
+              setCandidatesCacheTime(cacheTimestamp);
+              setLastUpdated(new Date(cacheTimestamp));
+
+              // If we're showing cached data, fetch updated data in the background
+              if (showLoading) {
+                setLoading(false);
+                // Fetch fresh data in the background
+                setTimeout(() => fetchCandidatesData(false, false), 100);
+                return;
+              }
+            }
+          }
         }
 
         const response = await axios.get(
-          `${apiUrl}/api/candidates/for-voter?voterId=${voterId}`,
+          `${apiUrl}/api/candidates/for-voter?voterId=${voterId}&t=${Date.now()}`,
           {
-            timeout: 15000,
+            timeout: 10000, // Reduced timeout from 15s to 10s
             headers: {
               "Cache-Control": "no-cache",
               Pragma: "no-cache",
             },
+            signal: fetchRequestRef.current.signal,
           }
         );
 
@@ -124,10 +132,24 @@ const Candidates: React.FC = () => {
           return;
         }
 
+        // Update state with fresh data
         setCandidatesByPosition(response.data);
         setPositions(Object.keys(response.data));
         setError("");
+
+        // Cache the data
+        const now = Date.now();
+        localStorage.setItem("candidatesData", JSON.stringify(response.data));
+        localStorage.setItem("candidatesCacheTime", now.toString());
+        setCandidatesCacheTime(now);
+        setLastUpdated(new Date(now));
       } catch (error) {
+        // Don't show errors for aborted requests
+        if (axios.isCancel(error)) {
+          console.log("Request canceled:", error.message);
+          return;
+        }
+
         if (
           axios.isAxiosError(error) &&
           error.response &&
@@ -140,12 +162,25 @@ const Candidates: React.FC = () => {
           setError("Failed to load candidates. Please try again.");
         }
       } finally {
-        setLoading(false);
+        if (showLoading) {
+          setLoading(false);
+        } else {
+          setIsBackgroundFetching(false);
+        }
+        fetchRequestRef.current = null;
       }
     };
 
+    // Initial fetch
     fetchCandidatesData();
-  }, [apiUrl]);
+
+    // Cleanup function to abort any pending requests when component unmounts
+    return () => {
+      if (fetchRequestRef.current) {
+        fetchRequestRef.current.abort();
+      }
+    };
+  }, [user, navigate, apiUrl]);
 
   useEffect(() => {
     const unselected = positions.filter(
@@ -154,6 +189,39 @@ const Candidates: React.FC = () => {
     );
     setUnselectedPositions(unselected);
   }, [selectedCandidateIds, noneSelected, positions]);
+
+  // Add this useEffect to restore selections from location state
+  useEffect(() => {
+    // Check if we have state from ConfirmVote component
+    if (location.state) {
+      const { selectedCandidates, noneSelected: receivedNoneSelected } =
+        location.state as {
+          selectedCandidates?: Record<string, Candidate>;
+          noneSelected?: Record<string, boolean>;
+        };
+
+      // Restore selected candidates if present
+      if (selectedCandidates && Object.keys(selectedCandidates).length > 0) {
+        // Convert selectedCandidates to selectedCandidateIds format
+        const newSelectedIds = Object.entries(selectedCandidates).reduce(
+          (acc, [position, candidate]) => {
+            acc[position] = candidate.id || candidate._id || "";
+            return acc;
+          },
+          {} as Record<string, string>
+        );
+        setSelectedCandidateIds(newSelectedIds);
+      }
+
+      // Restore none selected if present
+      if (
+        receivedNoneSelected &&
+        Object.keys(receivedNoneSelected).length > 0
+      ) {
+        setNoneSelected(receivedNoneSelected);
+      }
+    }
+  }, [location.state]);
 
   const handleVote = (candidate: Candidate, position: string) => {
     const candidateId = candidate.id || candidate._id || "";
@@ -207,14 +275,36 @@ const Candidates: React.FC = () => {
   };
 
   const handleRefresh = () => {
-    setLoading(true);
-    axios
-      .get(
-        `${apiUrl}/api/candidates/for-voter?voterId=${localStorage.getItem(
-          "voterId"
-        )}`
-      )
-      .then((response) => {
+    // Force refresh from server without using cache
+    const fetchCandidates = async () => {
+      setLoading(true);
+      try {
+        // Abort any in-flight requests
+        if (fetchRequestRef.current) {
+          fetchRequestRef.current.abort();
+        }
+
+        // Create new abort controller
+        fetchRequestRef.current = new AbortController();
+
+        const voterId = localStorage.getItem("voterId");
+        if (!voterId) {
+          setError("Please enter your Voter ID to view candidates.");
+          return;
+        }
+
+        const response = await axios.get(
+          `${apiUrl}/api/candidates/for-voter?voterId=${voterId}&t=${Date.now()}`,
+          {
+            timeout: 10000,
+            headers: {
+              "Cache-Control": "no-cache",
+              Pragma: "no-cache",
+            },
+            signal: fetchRequestRef.current.signal,
+          }
+        );
+
         if (!response.data || !Object.keys(response.data).length) {
           setError("No candidates available for your voter group.");
           setCandidatesByPosition({});
@@ -222,14 +312,29 @@ const Candidates: React.FC = () => {
           return;
         }
 
+        // Update state and cache with fresh data
         setCandidatesByPosition(response.data);
         setPositions(Object.keys(response.data));
         setError("");
-      })
-      .catch(() => {
+
+        const now = Date.now();
+        localStorage.setItem("candidatesData", JSON.stringify(response.data));
+        localStorage.setItem("candidatesCacheTime", now.toString());
+        setCandidatesCacheTime(now);
+        setLastUpdated(new Date(now));
+      } catch (error) {
+        if (axios.isCancel(error)) {
+          console.log("Request canceled:", error.message);
+          return;
+        }
         setError("Failed to refresh candidates. Please try again.");
-      })
-      .finally(() => setLoading(false));
+      } finally {
+        setLoading(false);
+        fetchRequestRef.current = null;
+      }
+    };
+
+    fetchCandidates();
   };
 
   const filteredCandidates = searchTerm
@@ -274,6 +379,22 @@ const Candidates: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-indigo-50 relative" ref={topRef}>
+      {/* Watermark Background */}
+      <div className="absolute inset-0 flex items-center justify-center opacity-[0.03] pointer-events-none overflow-hidden">
+        <div className="absolute w-[300%] h-[300%] -rotate-12">
+          <div className="absolute top-0 left-0 w-full h-full flex flex-wrap gap-2">
+            {Array.from({ length: 200 }).map((_, i) => (
+              <div
+                key={i}
+                className="text-indigo-900 text-2xl sm:text-4xl md:text-6xl lg:text-8xl font-extrabold whitespace-nowrap transform rotate-12"
+              >
+                {i % 2 === 0 ? "Your choice matters" : "Choose Wisely"}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
       {/* Header */}
       <div className="fixed top-0 left-0 right-0 z-50 w-full bg-indigo-800 text-white py-3 shadow-lg">
         <div className="text-center px-4 sm:px-6 lg:px-8">
@@ -312,6 +433,19 @@ const Candidates: React.FC = () => {
               )}
             </div>
           </div>
+
+          {/* Cache indicator for debugging */}
+          {lastUpdated && (
+            <div className="text-xs text-gray-500 text-right mb-2">
+              {isBackgroundFetching ? (
+                <span className="text-indigo-600">
+                  Updating in background...
+                </span>
+              ) : (
+                `Last updated: ${lastUpdated.toLocaleTimeString()}`
+              )}
+            </div>
+          )}
 
           {/* Loading Indicator */}
           {loading && (

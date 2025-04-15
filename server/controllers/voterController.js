@@ -362,12 +362,30 @@ export const validateVoter = async (req, res) => {
       });
     }
 
-    const voter = await Voter.findOne({ voterId });
+    const voter = await Voter.findOne({ voterId }).lean();
 
     if (!voter) {
       return res.status(404).json({
         success: false,
         message: "Voter not found",
+      });
+    }
+
+    // Check if voter has already voted
+    if (voter.hasVoted) {
+      // Format a nice response with voter info for the VoteSuccess component
+      const formattedVoter = {
+        name: voter.name,
+        voterId: voter.voterId,
+        votedAt: voter.votedAt,
+        voteToken: voter.voteToken || "TOKEN_NOT_AVAILABLE", // Include vote token
+      };
+
+      return res.status(400).json({
+        success: false,
+        message: "Voter has already cast a vote",
+        errorCode: "ALREADY_VOTED",
+        voter: formattedVoter,
       });
     }
 

@@ -40,7 +40,7 @@ const initialSettings: Settings = {
   schoolName: "",
   companyLogo: "",
   schoolLogo: "",
-  electionTitle: "Student Council Election",
+  electionTitle: "Student Council Election 2025",
   electionDate: "2025-05-15",
   electionStartTime: "08:00",
   electionEndTime: "17:00",

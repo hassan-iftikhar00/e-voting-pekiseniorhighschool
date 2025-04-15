@@ -8,7 +8,7 @@
 // Default settings factory function (if not already defined elsewhere)
 const createDefaultSettings = () => ({
   isActive: false,
-  electionTitle: "Student Council Election",
+  electionTitle: "Student Council Election 2025",
   votingStartDate: new Date().toISOString().split("T")[0],
   votingEndDate: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
     .toISOString()

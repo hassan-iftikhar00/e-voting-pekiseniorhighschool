@@ -1,142 +1,127 @@
 import React, { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
-import { Check, Download, LogOut, ExternalLink, Printer } from "lucide-react";
-import { useUser } from "../context/UserContext";
+import { Check, Printer, FileText } from "lucide-react";
 import { useSettings } from "../context/SettingsContext";
 
-const VoteSuccess: React.FC = () => {
-  const { state } = useLocation();
+interface VoteSuccessProps {
+  voter?: {
+    name: string;
+    voterId: string;
+    votedAt: string;
+    voteToken: string;
+  };
+  isPopup?: boolean;
+}
+
+const VoteSuccess: React.FC<VoteSuccessProps> = ({
+  voter,
+  isPopup = false,
+}) => {
+  const location = useLocation();
   const navigate = useNavigate();
-  const { logout } = useUser();
   const { settings } = useSettings();
+  const [voteToken, setVoteToken] = useState<string>("");
 
-  const [voteTimestamp] = useState(() => {
-    const timestamp = state?.votedAt ? new Date(state.votedAt) : new Date();
-    return timestamp;
-  });
-
-  const { voteToken } = state || {};
+  // Get voter information from location state or props
+  const voterData = voter || location.state?.voter || {};
+  const voteTimestamp = voterData.votedAt
+    ? new Date(voterData.votedAt)
+    : new Date();
 
   useEffect(() => {
-    if (!voteToken) {
-      navigate("/");
+    // Set vote token from state or props
+    if (location.state?.voteToken) {
+      setVoteToken(location.state.voteToken);
+    } else if (voterData.voteToken) {
+      setVoteToken(voterData.voteToken);
+    }
+  }, [location.state, voterData]);
+
+  const handlePrint = () => {
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) {
+      alert("Please allow pop-ups to print your receipt");
+      return;
     }
 
-    localStorage.removeItem("token");
-    localStorage.removeItem("voterId");
-  }, [voteToken, navigate]);
+    // Format vote timestamp
+    const formatDate = (date: Date) => {
+      return date
+        .toLocaleDateString("en-GB", {
+          day: "2-digit",
+          month: "2-digit",
+          year: "numeric",
+        })
+        .replace(/\//g, "-");
+    };
 
-  const handleDownloadReceipt = () => {
-    const receiptHtml = `
+    const formatTime = (date: Date) => {
+      return date.toLocaleTimeString("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true,
+      });
+    };
+
+    // HTML for the print receipt
+    const printContent = `
       <!DOCTYPE html>
-      <html lang="en">
+      <html>
       <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Vote Receipt - ${voteToken}</title>
+        <title>Vote Confirmation Receipt</title>
         <style>
           body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            line-height: 1.6;
-            color: #333;
-            max-width: 800px;
-            margin: 0 auto;
+            font-family: Arial, sans-serif;
             padding: 20px;
+            max-width: 80mm;
+            margin: 0 auto;
           }
           .receipt {
-            border: 1px solid #ddd;
-            border-radius: 8px;
-            padding: 25px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            border: 1px solid #ccc;
+            padding: 15px;
           }
           .receipt-header {
             text-align: center;
-            margin-bottom: 20px;
-            padding-bottom: 20px;
-            border-bottom: 2px solid #4f46e5;
-          }
-          .receipt-header h1 {
-            color: #4f46e5;
-            margin: 0 0 5px 0;
-          }
-          .receipt-header p {
-            color: #666;
-            margin: 0;
+            margin-bottom: 15px;
+            border-bottom: 1px dashed #ccc;
+            padding-bottom: 10px;
           }
           .school-info {
-            font-size: 18px;
             font-weight: bold;
             margin-bottom: 5px;
           }
+          h1 {
+            font-size: 14px;
+            margin: 5px 0;
+          }
           .receipt-body {
-            margin-bottom: 25px;
+            font-size: 12px;
           }
           .receipt-row {
             display: flex;
             justify-content: space-between;
-            padding: 10px 0;
-            border-bottom: 1px solid #eee;
+            margin-bottom: 8px;
           }
           .receipt-label {
             font-weight: bold;
-            color: #666;
-          }
-          .receipt-value {
-            text-align: right;
           }
           .token {
             font-family: monospace;
-            font-size: 20px;
-            background-color: #f5f3ff;
-            padding: 8px 12px;
-            border-radius: 4px;
-            letter-spacing: 1px;
-            font-weight: bold;
-            color: #4f46e5;
+            background-color: #f0f0f0;
+            padding: 2px 5px;
+            border-radius: 3px;
           }
-          .receipt-footer {
-            margin-top: 30px;
-            text-align: center;
-            color: #666;
-            font-size: 14px;
-          }
-          .receipt-note {
-            font-style: italic;
+          .footer {
             margin-top: 15px;
-          }
-          .stamp {
-            margin-top: 30px;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-          }
-          .stamp-inner {
-            border: 2px dashed #4CAF50;
-            border-radius: 50%;
-            width: 120px;
-            height: 120px;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            color: #4CAF50;
-            transform: rotate(-15deg);
-          }
-          .stamp-text {
-            font-weight: bold;
-            text-transform: uppercase;
-            font-size: 14px;
-          }
-          .stamp-date {
-            font-size: 12px;
+            font-size: 10px;
+            text-align: center;
+            border-top: 1px dashed #ccc;
+            padding-top: 10px;
           }
           @media print {
             body {
-              padding: 0;
               margin: 0;
-            }
-            .receipt {
-              border: none;
+              padding: 0;
               box-shadow: none;
             }
             .no-print {
@@ -148,34 +133,27 @@ const VoteSuccess: React.FC = () => {
       <body>
         <div class="receipt">
           <div class="receipt-header">
-            <div class="school-info">${settings.schoolName}</div>
+            <div class="school-info">${
+              settings.schoolName || "Peki Senior High School"
+            }</div>
             <h1>VOTE CONFIRMATION RECEIPT</h1>
-            <p>${settings.electionTitle || "Student Council Election"}</p>
+            <p>${settings.electionTitle || "Student Council Election 2025"}</p>
           </div>
           
           <div class="receipt-body">
             <div class="receipt-row">
-              <span class="receipt-label">Date:</span>
-              <span class="receipt-value">${voteTimestamp.toLocaleDateString(
-                undefined,
-                {
-                  weekday: "long",
-                  year: "numeric",
-                  month: "long",
-                  day: "numeric",
-                }
-              )}</span>
+              <span class="receipt-label">Voter:</span>
+              <span class="receipt-value">${voterData.name || "Anonymous"} (${
+      voterData.voterId || "Unknown"
+    })</span>
             </div>
             <div class="receipt-row">
-              <span class="receipt-label">Time:</span>
-              <span class="receipt-value">${voteTimestamp.toLocaleTimeString(
-                undefined,
-                {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                  second: "2-digit",
-                }
-              )}</span>
+              <span class="receipt-label">Date Voted:</span>
+              <span class="receipt-value">${formatDate(voteTimestamp)}</span>
+            </div>
+            <div class="receipt-row">
+              <span class="receipt-label">Time Voted:</span>
+              <span class="receipt-value">${formatTime(voteTimestamp)}</span>
             </div>
             <div class="receipt-row">
               <span class="receipt-label">Vote Token:</span>
@@ -183,311 +161,316 @@ const VoteSuccess: React.FC = () => {
             </div>
           </div>
           
-          <div class="stamp">
-            <div class="stamp-inner">
-              <div class="stamp-text">Verified</div>
-              <div class="stamp-date">${voteTimestamp.toLocaleDateString()}</div>
-            </div>
+          <div class="footer">
+            <p>This receipt confirms your vote was recorded successfully.</p>
+            <p>Keep this receipt for your records.</p>
           </div>
-          
-          <div class="receipt-footer">
-            <p>This receipt confirms your participation in the election.</p>
-            <p class="receipt-note">Your vote is anonymous and cannot be linked back to you.</p>
-            <p class="receipt-note">Keep this receipt as proof of your participation.</p>
-          </div>
+        </div>
+        
+        <div class="no-print" style="text-align: center; margin-top: 20px;">
+          <button onclick="window.print()">Print</button>
+          <button onclick="window.close()">Close</button>
         </div>
       </body>
       </html>
     `;
 
-    const blob = new Blob([receiptHtml], { type: "text/html" });
+    printWindow.document.open();
+    printWindow.document.write(printContent);
+    printWindow.document.close();
 
-    const downloadLink = document.createElement("a");
-    downloadLink.href = URL.createObjectURL(blob);
-    downloadLink.download = `vote-receipt-${voteToken}.html`;
-    document.body.appendChild(downloadLink);
-    downloadLink.click();
-    document.body.removeChild(downloadLink);
+    // Add slight delay before printing to ensure content is loaded
+    setTimeout(() => {
+      printWindow.print();
+    }, 500);
   };
 
-  const handlePrint = () => {
-    const receiptHtml = `
-      <!DOCTYPE html>
-      <html lang="en">
-      <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Vote Receipt - ${voteToken}</title>
-        <style>
+  // Replace jsPDF implementation with browser-based PDF export
+  const handleDownloadPDF = () => {
+    const pdfWindow = window.open("", "_blank");
+    if (!pdfWindow) {
+      alert("Please allow pop-ups to download your PDF receipt");
+      return;
+    }
+
+    const styles = `
+      <style>
+        body { 
+          font-family: 'Segoe UI', Arial, sans-serif; 
+          margin: 0; 
+          padding: 30px;
+          color: #333;
+        }
+        .container {
+          max-width: 800px;
+          margin: 0 auto;
+          border: 1px solid #e0e0e0;
+          border-radius: 8px;
+          box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+          padding: 40px;
+        }
+        h1 { 
+          text-align: center; 
+          color: #4338ca; 
+          margin-bottom: 20px; 
+          font-size: 24px;
+          border-bottom: 2px solid #4338ca;
+          padding-bottom: 10px;
+        }
+        .header-info {
+          text-align: center;
+          margin-bottom: 30px;
+        }
+        .receipt-section {
+          margin-bottom: 30px;
+        }
+        table { 
+          width: 100%; 
+          border-collapse: collapse; 
+          margin-bottom: 30px; 
+        }
+        th { 
+          background-color: #f3f4f6; 
+          color: #374151; 
+          font-weight: bold; 
+          text-align: left; 
+          padding: 12px; 
+          border-bottom: 1px solid #e5e7eb;
+        }
+        td { 
+          padding: 12px; 
+          border-bottom: 1px solid #e5e7eb; 
+        }
+        .token-container {
+          background-color: #f3f4f6;
+          border-radius: 6px;
+          padding: 15px;
+          margin: 20px 0;
+          text-align: center;
+        }
+        .token {
+          font-family: monospace;
+          font-size: 18px;
+          color: #4338ca;
+          font-weight: bold;
+        }
+        .footer { 
+          margin-top: 30px; 
+          text-align: center; 
+          font-size: 12px; 
+          color: #6b7280; 
+          border-top: 1px solid #e5e7eb;
+          padding-top: 20px;
+        }
+        @media print {
+          .no-print {
+            display: none;
+          }
           body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            line-height: 1.6;
-            color: #333;
-            max-width: 800px;
-            margin: 0 auto;
-            padding: 20px;
+            padding: 0;
           }
-          .receipt {
-            border: 1px solid #ddd;
-            border-radius: 8px;
-            padding: 25px;
+          .container {
+            border: none;
+            box-shadow: none;
           }
-          .receipt-header {
-            text-align: center;
-            margin-bottom: 20px;
-            padding-bottom: 20px;
-            border-bottom: 2px solid #4f46e5;
-          }
-          .receipt-header h1 {
-            color: #4f46e5;
-            margin: 0 0 5px 0;
-          }
-          .receipt-header p {
-            color: #666;
-            margin: 0;
-          }
-          .school-info {
-            font-size: 18px;
-            font-weight: bold;
-            margin-bottom: 5px;
-          }
-          .receipt-body {
-            margin-bottom: 25px;
-          }
-          .receipt-row {
-            display: flex;
-            justify-content: space-between;
-            padding: 10px 0;
-            border-bottom: 1px solid #eee;
-          }
-          .receipt-label {
-            font-weight: bold;
-            color: #666;
-          }
-          .receipt-value {
-            text-align: right;
-          }
-          .token {
-            font-family: monospace;
-            font-size: 20px;
-            background-color: #f5f3ff;
-            padding: 8px 12px;
-            border-radius: 4px;
-            letter-spacing: 1px;
-            font-weight: bold;
-            color: #4f46e5;
-          }
-          .receipt-footer {
-            margin-top: 30px;
-            text-align: center;
-            color: #666;
-            font-size: 14px;
-          }
-          .receipt-note {
-            font-style: italic;
-            margin-top: 15px;
-          }
-          .stamp {
-            margin-top: 30px;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-          }
-          .stamp-inner {
-            border: 2px dashed #4CAF50;
-            border-radius: 50%;
-            width: 120px;
-            height: 120px;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            color: #4CAF50;
-            transform: rotate(-15deg);
-          }
-          .stamp-text {
-            font-weight: bold;
-            text-transform: uppercase;
-            font-size: 14px;
-          }
-          .stamp-date {
-            font-size: 12px;
-          }
-        </style>
-      </head>
-      <body>
-        <div class="receipt">
-          <div class="receipt-header">
-            <div class="school-info">${settings.schoolName}</div>
-            <h1>VOTE CONFIRMATION RECEIPT</h1>
-            <p>${settings.electionTitle || "Student Council Election"}</p>
-          </div>
-          
-          <div class="receipt-body">
-            <div class="receipt-row">
-              <span class="receipt-label">Date:</span>
-              <span class="receipt-value">${voteTimestamp.toLocaleDateString(
-                undefined,
-                {
-                  weekday: "long",
-                  year: "numeric",
-                  month: "long",
-                  day: "numeric",
-                }
-              )}</span>
-            </div>
-            <div class="receipt-row">
-              <span class="receipt-label">Time:</span>
-              <span class="receipt-value">${voteTimestamp.toLocaleTimeString(
-                undefined,
-                {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                  second: "2-digit",
-                }
-              )}</span>
-            </div>
-            <div class="receipt-row">
-              <span class="receipt-label">Vote Token:</span>
-              <span class="receipt-value token">${voteToken}</span>
-            </div>
-          </div>
-          
-          <div class="stamp">
-            <div class="stamp-inner">
-              <div class="stamp-text">Verified</div>
-              <div class="stamp-date">${voteTimestamp.toLocaleDateString()}</div>
-            </div>
-          </div>
-          
-          <div class="receipt-footer">
-            <p>This receipt confirms your participation in the election.</p>
-            <p class="receipt-note">Your vote is anonymous and cannot be linked back to you.</p>
-            <p class="receipt-note">Keep this receipt as proof of your participation.</p>
-          </div>
-        </div>
-        <script>
-          window.onload = function() {
-            window.print();
-            setTimeout(function() {
-              window.close();
-            }, 500);
-          };
-        </script>
-      </body>
-      </html>
+        }
+      </style>
     `;
 
-    const printWindow = window.open("", "_blank");
-    if (printWindow) {
-      printWindow.document.write(receiptHtml);
-      printWindow.document.close();
-    }
-  };
+    // Format date and time for receipt
+    const formatDate = (date: Date) => {
+      return date.toLocaleDateString("en-GB", {
+        day: "numeric",
+        month: "long",
+        year: "numeric",
+      });
+    };
 
-  const handleLogout = () => {
-    logout();
-    navigate("/");
-  };
+    const formatTime = (date: Date) => {
+      return date.toLocaleTimeString("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: true,
+      });
+    };
 
-  const handleViewResults = () => {
-    if (settings.resultsPublished) {
-      navigate("/results");
-    }
+    pdfWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Vote Confirmation PDF - ${
+            voterData.voterId || "Receipt"
+          }</title>
+          ${styles}
+        </head>
+        <body>
+          <div class="container">
+            <h1>VOTE CONFIRMATION RECEIPT</h1>
+            
+            <div class="header-info">
+              <p><strong>${
+                settings.schoolName || "Peki Senior High School"
+              }</strong></p>
+              <p>${
+                settings.electionTitle || "Student Council Election 2025"
+              }</p>
+            </div>
+            
+            <div class="receipt-section">
+              <table>
+                <tr>
+                  <th>Voter Information</th>
+                  <th>Details</th>
+                </tr>
+                <tr>
+                  <td>Voter Name</td>
+                  <td>${voterData.name || "Anonymous"}</td>
+                </tr>
+                <tr>
+                  <td>Voter ID</td>
+                  <td>${voterData.voterId || "Unknown"}</td>
+                </tr>
+                <tr>
+                  <td>Date Voted</td>
+                  <td>${formatDate(voteTimestamp)}</td>
+                </tr>
+                <tr>
+                  <td>Time Voted</td>
+                  <td>${formatTime(voteTimestamp)}</td>
+                </tr>
+              </table>
+            </div>
+            
+            <div class="token-container">
+              <p>Your Vote Token:</p>
+              <div class="token">${voteToken || "TOKEN_NOT_AVAILABLE"}</div>
+            </div>
+            
+            <div class="footer">
+              <p>This receipt confirms your vote was recorded successfully.</p>
+              <p>Keep this receipt for your records.</p>
+              <p>Generated on ${new Date().toLocaleString()}</p>
+            </div>
+          </div>
+          
+          <div class="no-print" style="text-align: center; margin-top: 20px;">
+            <p>To save as PDF, use the Print option (Ctrl+P or Command+P) and select "Save as PDF".</p>
+            <button onclick="window.print()" style="padding: 8px 16px; background: #4338ca; color: white; border: none; border-radius: 4px; cursor: pointer; margin-right: 10px;">Save as PDF</button>
+            <button onclick="window.close()" style="padding: 8px 16px; background: #e5e7eb; color: #374151; border: none; border-radius: 4px; cursor: pointer;">Close</button>
+          </div>
+        </body>
+      </html>
+    `);
+
+    pdfWindow.document.close();
+
+    // Wait for content to load before prompting to print
+    setTimeout(() => {
+      pdfWindow.print();
+    }, 500);
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-indigo-800 flex items-center justify-center">
-      <div className="max-w-md w-full bg-white rounded-lg shadow-xl overflow-hidden">
-        <div className="bg-indigo-600 h-2"></div>
-  
-        <div className="p-8">
-          <div className="text-center">
-            <div className="mx-auto h-16 w-16 bg-green-100 rounded-full flex items-center justify-center mb-6">
-              <Check className="h-8 w-8 text-green-600" />
-            </div>
-            <h2 className="text-2xl font-bold text-gray-900 mb-2">
-              Vote Confirmation
-            </h2>
-            <p className="text-gray-600 mb-6">
-              Your vote has been successfully recorded.
-            </p>
-          </div>
-  
-          <div className="bg-gray-50 rounded-lg p-6 mb-6 border border-gray-200">
-            <div className="flex justify-between mb-2">
-              <span className="text-gray-500">School:</span>
-              <span className="text-gray-900 font-medium">
-                {settings.schoolName}
-              </span>
-            </div>
-            <div className="flex justify-between mb-2">
-              <span className="text-gray-500">Election:</span>
-              <span className="text-gray-900 font-medium">
-                {settings.electionTitle || "Student Council Election"}
-              </span>
-            </div>
-            <div className="flex justify-between mb-2">
-              <span className="text-gray-500">Date:</span>
-              <span className="text-gray-900 font-medium">
-                {voteTimestamp.toLocaleDateString()}
-              </span>
-            </div>
-            <div className="flex justify-between mb-2">
-              <span className="text-gray-500">Time:</span>
-              <span className="text-gray-900 font-medium">
-                {voteTimestamp.toLocaleTimeString()}
-              </span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-gray-500">Vote Token:</span>
-              <span className="text-gray-900 font-mono font-bold">
-                {voteToken}
-              </span>
-            </div>
-          </div>
-  
-          <div className="text-center text-sm text-gray-500 mb-6">
-            <p>Keep your vote token as proof of your participation.</p>
-            <p>Your vote is anonymous and cannot be linked back to you.</p>
-          </div>
-  
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <button
-              onClick={handleDownloadReceipt}
-              className="flex items-center justify-center px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
-            >
-              <Download className="h-4 w-4 mr-2" />
-              Download Receipt
-            </button>
-  
-            <button
-              onClick={handlePrint}
-              className="flex items-center justify-center px-4 py-2 border border-indigo-300 shadow-sm text-sm font-medium rounded-md text-indigo-700 bg-indigo-50 hover:bg-indigo-100"
-            >
-              <Printer className="h-4 w-4 mr-2" />
-              Print Receipt
-            </button>
-          </div>
-  
-          <button
-            onClick={handleLogout}
-            className="mt-4 flex items-center justify-center w-full px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700"
-          >
-            <LogOut className="h-4 w-4 mr-2" />
-            Finish
-          </button>
-  
-          {settings.resultsPublished && (
-            <button
-              onClick={handleViewResults}
-              className="mt-4 flex items-center justify-center w-full px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700"
-            >
-              <ExternalLink className="h-4 w-4 mr-2" />
-              View Election Results
-            </button>
-          )}
+    <div
+      className={`bg-white rounded-lg shadow-lg ${
+        isPopup ? "p-6" : "p-8 max-w-md mx-auto my-8"
+      }`}
+    >
+      <div className="text-center">
+        <div className="mx-auto h-16 w-16 bg-green-100 rounded-full flex items-center justify-center mb-6">
+          <Check className="h-8 w-8 text-green-600" />
         </div>
+        <h2 className="text-xl font-bold text-gray-900 mb-4">
+          Vote Confirmation
+        </h2>
+      </div>
+
+      <div className="space-y-4 mt-6">
+        <div className="bg-gray-50 p-4 rounded-lg">
+          <div className="space-y-3">
+            <div>
+              <p className="text-sm font-medium text-gray-500">School:</p>
+              <p className="text-base font-semibold text-gray-900">
+                {settings.schoolName || "Peki Senior High School"}
+              </p>
+            </div>
+
+            <div>
+              <p className="text-sm font-medium text-gray-500">Election:</p>
+              <p className="text-base font-semibold text-gray-900">
+                {settings.electionTitle || "Student Council Election 2025"}
+              </p>
+            </div>
+
+            <div>
+              <p className="text-sm font-medium text-gray-500">Voter:</p>
+              <p className="text-base font-semibold text-gray-900">
+                {voterData.name || "Anonymous"} (
+                {voterData.voterId || "Unknown"})
+              </p>
+            </div>
+
+            <div>
+              <p className="text-sm font-medium text-gray-500">Date Voted:</p>
+              <p className="text-base font-semibold text-gray-900">
+                {voteTimestamp
+                  .toLocaleDateString("en-GB", {
+                    day: "2-digit",
+                    month: "2-digit",
+                    year: "numeric",
+                  })
+                  .replace(/\//g, "-")}
+              </p>
+            </div>
+
+            <div>
+              <p className="text-sm font-medium text-gray-500">Time Voted:</p>
+              <p className="text-base font-semibold text-gray-900">
+                {voteTimestamp.toLocaleTimeString("en-US", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                  hour12: true,
+                })}
+              </p>
+            </div>
+
+            <div>
+              <p className="text-sm font-medium text-gray-500">Vote Token:</p>
+              <p className="text-base font-mono bg-gray-100 p-1 rounded text-indigo-700">
+                {voteToken || "TOKEN_NOT_AVAILABLE"}
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-8 space-y-3">
+        <button
+          onClick={handlePrint}
+          className="w-full flex items-center justify-center px-4 py-2 border border-indigo-300 shadow-sm text-sm font-medium rounded-md text-indigo-700 bg-indigo-50 hover:bg-indigo-100"
+        >
+          <Printer className="h-4 w-4 mr-2" />
+          Print Receipt
+        </button>
+
+        {/* PDF download button */}
+        <button
+          onClick={handleDownloadPDF}
+          className="w-full flex items-center justify-center px-4 py-2 border border-indigo-300 shadow-sm text-sm font-medium rounded-md text-indigo-700 bg-indigo-50 hover:bg-indigo-100"
+        >
+          <FileText className="h-4 w-4 mr-2" />
+          Download as PDF
+        </button>
+
+        {!isPopup && (
+          <button
+            onClick={() => navigate("/")}
+            className="w-full flex items-center justify-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700"
+          >
+            Return to Home
+          </button>
+        )}
       </div>
     </div>
   );

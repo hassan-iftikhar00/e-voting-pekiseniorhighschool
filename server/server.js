@@ -92,7 +92,7 @@ function initCache() {
     "settings",
     {
       systemName: "Peki Senior High School E-Voting System",
-      electionTitle: "School Prefect Elections",
+      electionTitle: "Student Council Elections 2025",
       isActive: false,
       votingStartTime: "08:00",
       votingEndTime: "16:00",
